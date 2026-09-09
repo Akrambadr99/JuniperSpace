@@ -19,7 +19,7 @@ export function createAtlasFixtures(
 
   const workspace = {
     id: ids.workspace('operations'),
-    name: 'Taskelia Workspace',
+    name: 'JuniperSpace Workspace',
     slug: 'atlas-operations',
     createdAt,
   }

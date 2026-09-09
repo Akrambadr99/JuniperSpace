@@ -75,7 +75,7 @@ export function createLargeWorkspaceFixtures(
   const ids = new DeterministicIdGenerator(configuration.namespace)
   const workspace = {
     id: ids.workspace('operations'),
-    name: 'Taskelia Large Workspace',
+    name: 'JuniperSpace Large Workspace',
     slug: 'atlas-large-operations',
     createdAt: baseTime,
   }
