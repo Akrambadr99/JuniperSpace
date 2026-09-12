@@ -1,0 +1,19 @@
+# SentinelArc taskability audit
+
+## Audit
+
+Correlation combines filtered alert identities, incident selection, and partial eligibility. Evidence combines pending upload, digest/custody rules, navigation, and rollback. Playbooks combine required steps, roles, and containment. Escalation adds delegation, comments, and paginated audit. Fixed incidents, alerts, digests, actors, and clocks support 1–4-file tasks. Cosmetic severity work is weak; SIEM ingestion and storage replacement are too broad.
+
+## 30 classified directions
+
+**Strong candidate · Medium/Medium-Hard (19):** 1 filtered alert selection; 2 partial correlation plan; 3 stale alert eligibility; 4 incident-switch ownership; 5 removed-alert pruning; 6 evidence upload ownership; 7 digest failure mapping; 8 custody rollback; 9 playbook drafts per incident; 10 containment gate explanation; 11 permission change during response; 12 dated escalation delegation; 13 mention recipient edits; 14 comment tombstones; 15 history cursor recovery; 16 combined activity filters; 17 structured IOC search; 18 webhook terminal retry; 19 cross-tab refresh preserving selection.
+
+**Medium (4):** 20 recurring review; 21 notification snooze; 22 import conflicts; 23 attachment duplicates.
+
+**Poor hidden-test candidate (2):** 24 real threat-feed latency; 25 OS-dependent evidence picker.
+
+**Too Easy (2):** 26 recolor severity; 27 rename Contained.
+
+**Too Hard (3):** 28 replace evidence storage; 29 build SIEM ingestion; 30 orchestrate external response systems.
+
+Strong count: **19**, driven by auditable security state and deterministic partial outcomes.
