@@ -17,3 +17,9 @@ Correlation combines filtered alert identities, incident selection, and partial 
 **Too Hard (3):** 28 replace evidence storage; 29 build SIEM ingestion; 30 orchestrate external response systems.
 
 Strong count: **19**, driven by auditable security state and deterministic partial outcomes.
+
+## Depth expansion directions 31–40
+
+31. **Strong candidate · Medium-Hard:** containment combines required playbook, custody, and accountable owner. 32. **Strong candidate · Medium:** incident switching recomputes completed evidence. 33. **Strong candidate · Medium-Hard:** late evidence collection revokes readiness. 34. **Strong candidate · Medium:** optional failed steps remain distinct from required blockers. 35. **Strong candidate · Medium-Hard:** sealing final evidence updates containment without losing timeline selection. 36. **Strong candidate · Medium:** missing ownership has a stable visible reason. 37. **Strong candidate · Medium-Hard:** permission change preserves investigation state during approval. 38. **Strong candidate · Medium:** empty evidence cannot silently satisfy custody. 39. **Too Easy:** rename Governance blocked. 40. **Too Hard:** trigger external containment systems.
+
+Expanded strong count: **27**.
