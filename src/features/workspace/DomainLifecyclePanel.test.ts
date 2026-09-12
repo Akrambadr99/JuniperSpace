@@ -10,7 +10,7 @@ describe('custodyTransfer', () => {
 import { product } from '../../product/definition';
 import { execute, fresh } from '../../workspace/engine';
 import type { Snapshot, Value } from '../../workspace/types';
-const run = (state: Snapshot, id: string, target: string, operation: string, actorId = 'actor-2', input: Record<string, Value> = {}) => execute(state, { id, entityId: target, operation, actorId, input, expectedRevision: state.revision, type: 'operate' }, product, '2026-09-12T10:00:00Z');
+const run = (state: Snapshot, id: string, target: string, operation: string, actorId = 'actor-2', input: Record<string, Value> = {}, now='2026-09-12T10:00:00Z') => execute(state, { id, entityId: target, operation, actorId, input, expectedRevision: state.revision, type: 'operate' }, product, now);
 const sealed = () => run(run(fresh(product), 'analyze', 'evidence-1', 'analyze'), 'seal', 'evidence-1', 'seal');
 const requested = () => run(sealed(), 'request', 'evidence-1', 'request-transfer', 'actor-2', { recipient: 'Maya Hassan', reason: 'Transfer sealed evidence for incident review.' });
 describe('durable custody transfers', () => {
@@ -43,4 +43,26 @@ describe('durable custody transfers', () => {
         state = run(state, 'retry', 'evidence-1', 'request-transfer', 'actor-2', { recipient: 'Maya Hassan', reason: 'Transfer refreshed evidence for incident review.' });
         expect(run(state, 'accept', 'retry-1', 'accept-transfer', 'actor-0', { note: 'Received sealed evidence with matching digest.' }).entities.find(item => item.id === 'evidence-1')?.fields['custodian']).toBe('actor-0');
     });
+});
+
+describe('time-bounded evidence access', () => {
+ it('requires independent custody approval and records one use without changing evidence', () => {
+  let state=run(sealed(),'request-access','evidence-1','request-access','actor-1',{until:'2026-09-13',purpose:'Investigate the correlated endpoint beacon.'});
+  const evidence=structuredClone(state.entities.find(item => item.id === 'evidence-1'));
+  expect(() => run(state,'wrong','request-access-1','approve-access','actor-0')).toThrow('current custodian');
+  state=run(state,'approve-access','request-access-1','approve-access','actor-2');
+  state=run(state,'use-access','request-access-1','use-access','actor-1');
+  expect(state.entities.find(item => item.id === 'request-access-1')).toMatchObject({status:'consumed',fields:{requester:'actor-1',custodian:'actor-2'}});
+  expect(state.entities.find(item => item.id === 'evidence-1')).toEqual(evidence);
+  expect(() => run(state,'again','request-access-1','use-access','actor-1')).toThrow('no longer available');
+ });
+ it('rejects expired use and permits custodian expiry without custody mutation', () => {
+  let state=run(sealed(),'request-access','evidence-1','request-access','actor-1',{until:'2026-09-13',purpose:'Investigate the correlated endpoint beacon.'});
+  state=run(state,'approve-access','request-access-1','approve-access','actor-2');
+  const before=structuredClone(state.entities.find(item => item.id === 'evidence-1'));
+  expect(() => run(state,'late','request-access-1','use-access','actor-1',{},'2026-09-13T00:00:00Z')).toThrow('expired');
+  state=run(state,'expire','request-access-1','expire-access','actor-2',{},'2026-09-13T00:00:00Z');
+  expect(state.entities.find(item => item.id === 'request-access-1')?.status).toBe('expired');
+  expect(state.entities.find(item => item.id === 'evidence-1')).toEqual(before);
+ });
 });

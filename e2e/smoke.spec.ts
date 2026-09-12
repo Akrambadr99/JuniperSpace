@@ -36,3 +36,18 @@ test('incident closure waits for custody resolution and preserves history on reo
  await expect(panel).toContainText('close: Endpoint recovered');await panel.getByRole('button',{name:'Run: Reopen incident investigation',exact:true}).click();await dialog.getByLabel('Reopening rationale',{exact:true}).fill('New threat evidence requires further investigation.');await save();await page.reload();
  await expect(panel).toContainText('close: Endpoint recovered');await expect(panel).toContainText('reopen: New threat evidence');
 });
+
+test('analyst evidence access requires custodian approval and records consumption',async({page})=>{
+ await page.goto('/operations');const actor=page.getByRole('combobox',{name:'Current actor'});const dialog=page.getByRole('dialog');
+ const save=async()=>{await dialog.getByRole('button',{name:'Save command',exact:true}).click();await expect(dialog).toHaveCount(0);};
+ await actor.selectOption('actor-2');await page.getByRole('button',{name:/^Evidence items/}).click();
+ await page.getByRole('button',{name:'Record evidence analysis',exact:true}).click();await save();await page.getByRole('button',{name:'Seal evidence custody',exact:true}).click();await save();
+ await actor.selectOption('actor-1');await page.getByRole('button',{name:'Request evidence access',exact:true}).click();
+ await dialog.getByLabel('Access expiry',{exact:true}).fill('2026-09-13');await dialog.getByLabel('Access purpose',{exact:true}).fill('Investigate the correlated endpoint beacon.');await save();
+ await page.getByRole('button',{name:/^Evidence access grants/}).click();await actor.selectOption('actor-2');
+ await page.getByRole('button',{name:'Approve evidence access',exact:true}).click();await save();await actor.selectOption('actor-1');
+ await page.getByRole('button',{name:'Open evidence with grant',exact:true}).click();await save();await page.reload();
+ await page.getByRole('button',{name:/^Evidence access grants/}).click();await expect(page.locator('.detail-title')).toContainText('consumed');
+ await expect(page.locator('.detail')).toContainText('Investigate the correlated endpoint beacon.');
+ await page.getByRole('button',{name:/^Evidence items/}).click();await expect(page.locator('.detail-title')).toContainText('sealed');
+});

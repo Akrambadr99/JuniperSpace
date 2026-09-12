@@ -29,6 +29,7 @@ const seed = [entity('alert-1', 'alert', 'Suspicious PowerShell beacon', 'new', 
 kinds.find(item => item.key === 'evidence')!.fields.push({ ...txt('custodian', 'Current custodian'), required: false });
 kinds.push(kind('transfer', 'Custody transfers', ['requested', 'accepted', 'rejected', 'cancelled'], [], [ref('evidence', 'Evidence item', 'evidence'), txt('sender', 'Sending custodian'), txt('recipient', 'Receiving custodian'), txt('digest', 'Pinned digest'), num('evidenceVersion', 'Evidence version', 1, 1), txt('reason', 'Transfer reason')]));
 kinds.push(kind('acknowledgement', 'Custody acknowledgements', ['recorded'], [], [ref('transfer', 'Custody transfer', 'transfer'), ref('evidence', 'Evidence item', 'evidence'), txt('actor', 'Acknowledging actor'), txt('decision', 'Decision'), txt('digest', 'Acknowledged digest'), txt('recordedAt', 'Acknowledgement timestamp'), txt('note', 'Acknowledgement note')]));
+kinds.push(kind('access', 'Evidence access grants', ['requested', 'approved', 'consumed', 'expired', 'rejected'], [], [ref('evidence', 'Evidence item', 'evidence'), txt('requester', 'Requesting analyst'), txt('custodian', 'Approving custodian'), txt('digest', 'Pinned digest'), num('evidenceVersion', 'Evidence version', 1, 1), date('expiresAt', 'Access expiry'), txt('purpose', 'Access purpose'), {...txt('usedAt', 'Accessed at'), required:false}]));
 const custodian = (entities: Entity[], evidence: Entity) => evidence.fields['custodian'] ?? product.actors.find(actor => actor.name === find(entities, text(evidence.fields, 'incident'), 'incident').fields['owner'])?.id;
 const acknowledgeTransfer = (decision: 'accepted' | 'rejected' | 'cancelled'): Operation['run'] => ({ state, entity, actor, input, now, add }) => {
     requireThat(actor.id === entity.fields[decision === 'cancelled' ? 'sender' : 'recipient'], decision === 'cancelled' ? 'Only the sending custodian can cancel this transfer.' : 'Only the named recipient can acknowledge this transfer.');
@@ -56,6 +57,36 @@ operations.push(
     { key: 'reject-transfer', label: 'Reject custody transfer', kind: 'transfer', from: ['requested'], roles: roles.slice(0, 3), fields: [txt('note', 'Acknowledgement note')], run: acknowledgeTransfer('rejected') },
     { key: 'cancel-transfer', label: 'Cancel custody transfer', kind: 'transfer', from: ['requested'], roles: roles.slice(0, 3), fields: [txt('note', 'Acknowledgement note')], run: acknowledgeTransfer('cancelled') },
 );
+operations.push(
+    {key:'request-access',label:'Request evidence access',kind:'evidence',from:['sealed'],roles:[roles[1]!],fields:[date('until','Access expiry'),txt('purpose','Access purpose')],run:({state,entity,actor,input,now,add}) => {
+        const owner=custodian(state.entities,entity),until=Date.parse(text(input,'until')),started=Date.parse(now);
+        requireThat(owner !== actor.id,'The current custodian does not require a separate access grant.');
+        requireThat(until > started && until-started <= 2*86400000,'Access expiry must be within the next two days.');
+        requireThat(text(input,'purpose').trim().length >= 12,'Provide a specific evidence access purpose.');
+        requireThat(!linked(state.entities,'access','evidence',entity.id).some(item => item.fields['requester'] === actor.id && ['requested','approved'].includes(item.status)),'This analyst already has a pending access grant.');
+        add('access','Access · '+entity.title,{evidence:entity.id,requester:actor.id,custodian:String(owner),digest:text(entity.fields,'sha256'),evidenceVersion:entity.revision,expiresAt:text(input,'until'),purpose:text(input,'purpose').trim()});
+        return 'Evidence access requested against current custody and digest.';
+    }},
+    {key:'approve-access',label:'Approve evidence access',kind:'access',from:['requested'],roles:roles.slice(0,3),run:({state,entity,actor,now}) => {
+        const evidence=find(state.entities,text(entity.fields,'evidence'),'evidence');
+        requireThat(actor.id === entity.fields['custodian'] && actor.id !== entity.fields['requester'],'Only the independent current custodian can approve access.');
+        requireThat(custodian(state.entities,evidence) === actor.id && evidence.revision === entity.fields['evidenceVersion'] && evidence.fields['sha256'] === entity.fields['digest'],'Evidence or custody changed. Submit a fresh access request.');
+        requireThat(Date.parse(now) < Date.parse(text(entity.fields,'expiresAt')),'Access request has expired.');
+        entity.status='approved';return 'Custodian approved time-bounded evidence access.';
+    }},
+    {key:'use-access',label:'Open evidence with grant',kind:'access',from:['approved'],roles:[roles[1]!],run:({state,entity,actor,now}) => {
+        requireThat(actor.id === entity.fields['requester'],'Only the requesting analyst can use this access grant.');
+        const evidence=find(state.entities,text(entity.fields,'evidence'),'evidence');
+        requireThat(Date.parse(now) < Date.parse(text(entity.fields,'expiresAt')),'Evidence access grant has expired.');
+        requireThat(evidence.revision === entity.fields['evidenceVersion'] && evidence.fields['sha256'] === entity.fields['digest'] && custodian(state.entities,evidence) === entity.fields['custodian'],'Evidence or custody changed. Request access again.');
+        entity.status='consumed';entity.fields['usedAt']=now;return 'Evidence access recorded; custody and digest remained unchanged.';
+    }},
+    {key:'expire-access',label:'Expire unused evidence access',kind:'access',from:['requested','approved'],roles:roles.slice(0,3),run:({entity,actor,now}) => {
+        requireThat(actor.id === entity.fields['custodian'],'Only the approving custodian can expire this grant.');
+        requireThat(Date.parse(now) >= Date.parse(text(entity.fields,'expiresAt')),'Evidence access grant has not expired.');
+        entity.status='expired';return 'Unused evidence access expired without changing custody.';
+    }},
+);
 
 kinds.push(kind('closure', 'Incident review history', ['recorded'], [], [ref('incident','Incident','incident'),choice('decision','Review decision',['close','reopen']),txt('actor','Reviewing owner'),txt('at','Review time'),txt('note','Review rationale'),{...txt('evidence','Custody evidence snapshot'),max:1000000}]));
 operations.push(
@@ -80,6 +111,7 @@ operations.push(
 const validate: Product['validate'] = entities => {
     for (const link of rows(entities, 'link'))
         requireThat(find(entities, text(link.fields, 'alert')).status === 'linked', 'Active correlation points to an unlinked alert.');
+    for (const grant of rows(entities,'access').filter(item => ['approved','consumed'].includes(item.status))) requireThat(Boolean(grant.fields['custodian']) && Boolean(grant.fields['digest']),'Approved evidence access requires pinned custody evidence.');
 };
 const metrics: Product['metrics'] = entities => [{ label: 'Critical incidents', value: String(rows(entities, 'incident').filter(row => row.fields['severity'] === 'critical' && row.status !== 'closed').length) }, { label: 'Unlinked alerts', value: String(rows(entities, 'alert').filter(row => row.status === 'new').length) }, { label: 'Sealed evidence', value: String(rows(entities, 'evidence').filter(row => row.status === 'sealed').length) }];
 export const product: Product = { name: 'SentinelArc', description: 'Incident provenance, evidence custody and gated containment', accent: '#be123c', actors: roles.map((role, index) => ({ id: 'actor-' + String(index), name: ['Maya Hassan', 'Omar Saleh', 'Lina Farouk', 'Nadia Ali'][index] ?? role, role })), kinds, operations, seed, validate, metrics };
