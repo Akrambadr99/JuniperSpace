@@ -19,3 +19,10 @@ it('requires accountable ownership and completed custody transfers',()=>{
  const incident=state.entities.find(item=>item.id==='incident-1');if(!incident)throw new Error('Missing incident');incident.fields['owner']='Omar Saleh';
  expect(()=>act(state,'close-incident','incident-1',{note:'Endpoint recovered and custody evidence reviewed.'})).toThrow('accountable');
 });
+
+it('retains full custody review evidence when acquisition notes exceed the ordinary snapshot text limit',()=>{
+ const state=recovered();const evidence=state.entities.find(item=>item.id==='evidence-1');if(!evidence)throw new Error('Missing evidence');evidence.fields['source']='Acquisition record '.repeat(200);
+ const closed=act(state,'close-incident','incident-1',{note:'Endpoint recovered and full acquisition record reviewed.'});
+ const packet=String(closed.entities.find(item=>item.kind==='closure')?.fields['evidence']);expect(packet.length).toBeGreaterThan(4000);expect(packet).toContain(evidence.fields['source']);
+ expect(closed.entities.find(item=>item.id==='incident-1')?.status).toBe('closed');
+});

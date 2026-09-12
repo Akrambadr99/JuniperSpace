@@ -57,7 +57,7 @@ operations.push(
     { key: 'cancel-transfer', label: 'Cancel custody transfer', kind: 'transfer', from: ['requested'], roles: roles.slice(0, 3), fields: [txt('note', 'Acknowledgement note')], run: acknowledgeTransfer('cancelled') },
 );
 
-kinds.push(kind('closure', 'Incident review history', ['recorded'], [], [ref('incident','Incident','incident'),choice('decision','Review decision',['close','reopen']),txt('actor','Reviewing owner'),txt('at','Review time'),txt('note','Review rationale'),txt('evidence','Custody evidence snapshot')]));
+kinds.push(kind('closure', 'Incident review history', ['recorded'], [], [ref('incident','Incident','incident'),choice('decision','Review decision',['close','reopen']),txt('actor','Reviewing owner'),txt('at','Review time'),txt('note','Review rationale'),{...txt('evidence','Custody evidence snapshot'),max:1000000}]));
 operations.push(
     {key:'close-incident',label:'Close recovered incident',kind:'incident',from:['recovered'],roles:[roles[0]!],fields:[txt('note','Closure rationale')],run:({state,entity,actor,input,now,add}) => {
         requireThat(entity.fields['owner'] === actor.name,'Only the accountable incident owner can close this incident.');
