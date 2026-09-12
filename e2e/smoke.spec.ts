@@ -51,3 +51,26 @@ test('analyst evidence access requires custodian approval and records consumptio
  await expect(page.locator('.detail')).toContainText('Investigate the correlated endpoint beacon.');
  await page.getByRole('button',{name:/^Evidence items/}).click();await expect(page.locator('.detail-title')).toContainText('sealed');
 });
+
+
+test('integrity mismatch quarantines evidence until a matching observation is independently restored', async ({ page }) => {
+    await page.goto('/operations');
+    const actor = page.getByRole('combobox', { name: 'Current actor' });const dialog = page.getByRole('dialog');
+    const save = async () => { await dialog.getByRole('button', { name: 'Save command', exact: true }).click();await expect(dialog).toHaveCount(0); };
+    await actor.selectOption('actor-2');await page.getByRole('button', { name: /^Evidence items/ }).click();
+    await page.getByRole('button', { name: 'Record evidence analysis', exact: true }).click();await save();
+    await page.getByRole('button', { name: 'Seal evidence custody', exact: true }).click();await save();
+    await page.getByRole('button', { name: 'Record integrity observation', exact: true }).click();
+    await dialog.getByLabel('Observed digest', { exact: true }).fill('sha256:deadbeef');
+    await dialog.getByLabel('Integrity review note', { exact: true }).fill('Acquisition copy checksum differs from the pinned original.');await save();
+    await expect(page.locator('.detail-title')).toContainText('quarantined');
+    await page.getByRole('button', { name: 'Record integrity observation', exact: true }).click();
+    await dialog.getByLabel('Observed digest', { exact: true }).fill('sha256:11223344aabbccdd');
+    await dialog.getByLabel('Integrity review note', { exact: true }).fill('Verified original acquisition copy matches the pinned digest.');await save();
+    await actor.selectOption('actor-0');await page.getByRole('button', { name: 'Restore verified evidence', exact: true }).click();
+    await dialog.getByLabel('Integrity review note', { exact: true }).fill('Commander independently approves release of the verified original.');await save();
+    await page.reload();await page.getByRole('button', { name: /^Evidence items/ }).click();
+    await expect(page.locator('.detail-title')).toContainText('sealed');
+    await page.getByRole('button', { name: /^Integrity observations/ }).click();
+    await expect(page.locator('.list .row')).toHaveCount(2);
+});
