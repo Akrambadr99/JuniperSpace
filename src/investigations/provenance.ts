@@ -1,11 +1,79 @@
-export type Severity='low'|'medium'|'high'|'critical'
-export type SecurityRole='SOC Analyst'|'Incident Commander'|'Security Engineer'|'Auditor'
-export interface Alert{id:string;source:string;asset:string;indicator:string;score:number;occurredAt:string;incidentId?:string}
-export interface Evidence{id:string;kind:'log'|'image'|'artifact'|'statement';sha256:string;collectedAt:string;sourceAlertIds:string[];parentId?:string}
-export interface Incident{id:string;title:string;severity:Severity;alertIds:string[];evidenceIds:string[];state:'triage'|'investigating'|'contained'|'recovered'|'closed';version:number;provenance:string[]}
-export interface PlaybookStep{id:string;label:string;required:boolean;state:'pending'|'running'|'complete'|'failed'}
-export function severityFor(alerts:Alert[]):Severity{const score=alerts.reduce((max,a)=>Math.max(max,a.score),0)+(new Set(alerts.map(a=>a.asset)).size>=3?10:0);return score>=90?'critical':score>=70?'high':score>=40?'medium':'low'}
-export function mergeIncidents(left:Incident,right:Incident,alerts:Alert[],expectedVersions:[number,number],role:SecurityRole):Incident{if(!['Incident Commander','SOC Analyst'].includes(role))throw new Error('Investigation merge permission is required.');if(left.version!==expectedVersions[0]||right.version!==expectedVersions[1])throw new Error('An incident changed during correlation. Refresh before merging.');const alertIds=[...new Set([...left.alertIds,...right.alertIds])];return{id:left.id,title:left.title+' / '+right.title,severity:severityFor(alerts.filter(a=>alertIds.includes(a.id))),alertIds,evidenceIds:[...new Set([...left.evidenceIds,...right.evidenceIds])],state:'investigating',version:left.version+1,provenance:[...left.provenance,...right.provenance,'Merged '+right.id+' into '+left.id]}}
-export function splitAlert(incident:Incident,alertId:string,newIncidentId:string):{remaining:Incident;separated:Incident}{if(!incident.alertIds.includes(alertId))throw new Error('Alert is not linked to this incident.');if(incident.alertIds.length===1)throw new Error('A single-alert incident cannot be split.');return{remaining:{...incident,alertIds:incident.alertIds.filter(id=>id!==alertId),version:incident.version+1,provenance:[...incident.provenance,'Separated '+alertId+' to '+newIncidentId]},separated:{id:newIncidentId,title:'Separated investigation',severity:'medium',alertIds:[alertId],evidenceIds:[],state:'triage',version:1,provenance:['Separated from '+incident.id]}}}
-export function advanceContainment(incident:Incident,steps:PlaybookStep[],role:SecurityRole):Incident{if(role!=='Incident Commander'&&role!=='Security Engineer')throw new Error('Containment authority is required.');const open=steps.filter(s=>s.required&&s.state!=='complete');if(open.length)throw new Error('Required playbook steps remain incomplete: '+open.map(s=>s.label).join(', '));return{...incident,state:'contained',version:incident.version+1,provenance:[...incident.provenance,'Containment declared']}}
-export function evidenceChain(evidence:Evidence[],id:string):Evidence[]{const byId=new Map(evidence.map(e=>[e.id,e]));const chain:Evidence[]=[];let current=byId.get(id);const seen=new Set<string>();while(current){if(seen.has(current.id))throw new Error('Evidence provenance contains a cycle.');seen.add(current.id);chain.unshift(current);current=current.parentId?byId.get(current.parentId):undefined}return chain}
+export type Severity = 'low' | 'medium' | 'high' | 'critical';
+export type SecurityRole = 'SOC Analyst' | 'Incident Commander' | 'Security Engineer' | 'Auditor';
+export interface Alert {
+    id: string;
+    source: string;
+    asset: string;
+    indicator: string;
+    score: number;
+    occurredAt: string;
+    incidentId?: string;
+}
+export interface Evidence {
+    id: string;
+    kind: 'log' | 'image' | 'artifact' | 'statement';
+    sha256: string;
+    collectedAt: string;
+    sourceAlertIds: string[];
+    parentId?: string;
+}
+export interface Incident {
+    id: string;
+    title: string;
+    severity: Severity;
+    alertIds: string[];
+    evidenceIds: string[];
+    state: 'triage' | 'investigating' | 'contained' | 'recovered' | 'closed';
+    version: number;
+    provenance: string[];
+}
+export interface PlaybookStep {
+    id: string;
+    label: string;
+    required: boolean;
+    state: 'pending' | 'running' | 'complete' | 'failed';
+}
+export function severityFor(alerts: Alert[]): Severity { const score = alerts.reduce((max, a) => Math.max(max, a.score), 0) + (new Set(alerts.map(a => a.asset)).size >= 3 ? 10 : 0); return score >= 90 ? 'critical' : score >= 70 ? 'high' : score >= 40 ? 'medium' : 'low'; }
+export function mergeIncidents(left: Incident, right: Incident, alerts: Alert[], expectedVersions: [
+    number,
+    number
+], role: SecurityRole): Incident {
+    if (!['Incident Commander', 'SOC Analyst'].includes(role))
+        throw new Error('Investigation merge permission is required.');
+    if (left.version !== expectedVersions[0] || right.version !== expectedVersions[1])
+        throw new Error('An incident changed during correlation. Refresh before merging.');
+    const alertIds = [...new Set([...left.alertIds, ...right.alertIds])];
+    return { id: left.id, title: left.title + ' / ' + right.title, severity: severityFor(alerts.filter(a => alertIds.includes(a.id))), alertIds, evidenceIds: [...new Set([...left.evidenceIds, ...right.evidenceIds])], state: 'investigating', version: left.version + 1, provenance: [...left.provenance, ...right.provenance, 'Merged ' + right.id + ' into ' + left.id] };
+}
+export function splitAlert(incident: Incident, alertId: string, newIncidentId: string): {
+    remaining: Incident;
+    separated: Incident;
+} {
+    if (!incident.alertIds.includes(alertId))
+        throw new Error('Alert is not linked to this incident.');
+    if (incident.alertIds.length === 1)
+        throw new Error('A single-alert incident cannot be split.');
+    return { remaining: { ...incident, alertIds: incident.alertIds.filter(id => id !== alertId), version: incident.version + 1, provenance: [...incident.provenance, 'Separated ' + alertId + ' to ' + newIncidentId] }, separated: { id: newIncidentId, title: 'Separated investigation', severity: 'medium', alertIds: [alertId], evidenceIds: [], state: 'triage', version: 1, provenance: ['Separated from ' + incident.id] } };
+}
+export function advanceContainment(incident: Incident, steps: PlaybookStep[], role: SecurityRole): Incident {
+    if (role !== 'Incident Commander' && role !== 'Security Engineer')
+        throw new Error('Containment authority is required.');
+    const open = steps.filter(s => s.required && s.state !== 'complete');
+    if (open.length)
+        throw new Error('Required playbook steps remain incomplete: ' + open.map(s => s.label).join(', '));
+    return { ...incident, state: 'contained', version: incident.version + 1, provenance: [...incident.provenance, 'Containment declared'] };
+}
+export function evidenceChain(evidence: Evidence[], id: string): Evidence[] {
+    const byId = new Map(evidence.map(e => [e.id, e]));
+    const chain: Evidence[] = [];
+    let current = byId.get(id);
+    const seen = new Set<string>();
+    while (current) {
+        if (seen.has(current.id))
+            throw new Error('Evidence provenance contains a cycle.');
+        seen.add(current.id);
+        chain.unshift(current);
+        current = current.parentId ? byId.get(current.parentId) : undefined;
+    }
+    return chain;
+}
