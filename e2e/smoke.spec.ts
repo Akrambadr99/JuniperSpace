@@ -21,3 +21,18 @@ test('recipient acceptance persists custody and acknowledgement history', async 
     await expect(page.locator('.detail')).toContainText('Received sealed evidence with matching digest.');
     await expect(page.locator('.detail-title')).toContainText('recorded');
 });
+
+
+test('incident closure waits for custody resolution and preserves history on reopen',async({page})=>{
+ await page.goto('/operations');const actor=page.getByRole('combobox',{name:'Current actor'});const dialog=page.getByRole('dialog');const panel=page.getByRole('region',{name:'Containment readiness gate'});
+ const click=async(name:string)=>page.getByRole('button',{name,exact:true}).click();const save=async()=>{await click('Save command');await expect(dialog).toHaveCount(0);};
+ await actor.selectOption('actor-2');await page.getByRole('button',{name:/^Evidence items/}).click();await click('Record evidence analysis');await save();await click('Seal evidence custody');await save();
+ await click('Request custody transfer');await dialog.getByLabel('Transfer reason',{exact:true}).fill('Transfer sealed evidence for closure review.');await save();
+ await actor.selectOption('actor-0');await page.getByRole('button',{name:/^Response steps/}).click();await click('Complete response step');await save();
+ await panel.getByRole('button',{name:'Run: Declare containment',exact:true}).click();await save();await panel.getByRole('button',{name:'Run: Record service recovery',exact:true}).click();await save();
+ await panel.getByRole('button',{name:'Run: Close recovered incident',exact:true}).click();await dialog.getByLabel('Closure rationale',{exact:true}).fill('Endpoint recovered and custody evidence reviewed.');await click('Save command');await expect(dialog.getByRole('alert')).toContainText('pending custody');await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:/^Custody transfers/}).click();await click('Accept custody transfer');await dialog.getByLabel('Acknowledgement note',{exact:true}).fill('Received sealed evidence with digest verified.');await save();
+ await panel.getByRole('button',{name:'Run: Close recovered incident',exact:true}).click();await dialog.getByLabel('Closure rationale',{exact:true}).fill('Endpoint recovered and custody evidence reviewed.');await save();await page.reload();
+ await expect(panel).toContainText('close: Endpoint recovered');await panel.getByRole('button',{name:'Run: Reopen incident investigation',exact:true}).click();await dialog.getByLabel('Reopening rationale',{exact:true}).fill('New threat evidence requires further investigation.');await save();await page.reload();
+ await expect(panel).toContainText('close: Endpoint recovered');await expect(panel).toContainText('reopen: New threat evidence');
+});
