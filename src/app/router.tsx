@@ -6,4 +6,5 @@ children.splice(2, 0, { path: 'response-control', lazy: async () => ({ Component
 children.splice(3,0,{path:'identity-containment',lazy:async()=>({Component:(await import('../identity-containment/IdentityContainmentPage')).IdentityContainmentPage})});
 children.splice(4,0,{path:'detection-governance',lazy:async()=>({Component:(await import('../detection-governance/DetectionGovernancePage')).DetectionGovernancePage})});
 children.splice(5,0,{path:'evidence-retention',lazy:async()=>({Component:(await import('../evidence-retention/EvidenceRetentionPage')).EvidenceRetentionPage})});
+children.splice(6,0,{path:'indicator-control',lazy:async()=>({Component:(await import('../indicator-control/IndicatorControlPage')).IndicatorControlPage})});
 export const browserRouter = createBrowserRouter([{ path: '/', Component: AppShell, HydrateFallback: RouteLoading, children }]);
