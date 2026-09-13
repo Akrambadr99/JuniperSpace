@@ -14,4 +14,5 @@ children.splice(10,0,{path:'access-certification',lazy:async()=>({Component:(awa
 children.splice(11,0,{path:'vulnerability-remediation',lazy:async()=>({Component:(await import('../vulnerability-remediation/VulnerabilityRemediationPage')).VulnerabilityRemediationPage})});
 children.splice(12,0,{path:'certificate-rotation',lazy:async()=>({Component:(await import('../certificate-rotation/CertificateRotationPage')).CertificateRotationPage})});
 children.splice(13,0,{path:'vendor-assessment',lazy:async()=>({Component:(await import('../vendor-assessment/VendorAssessmentPage')).VendorAssessmentPage})});
+children.splice(14,0,{path:'recovery-drill',lazy:async()=>({Component:(await import('../recovery-drill/RecoveryDrillPage')).RecoveryDrillPage})});
 export const browserRouter = createBrowserRouter([{ path: '/', Component: AppShell, HydrateFallback: RouteLoading, children }]);
