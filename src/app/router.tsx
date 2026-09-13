@@ -16,4 +16,5 @@ children.splice(12,0,{path:'certificate-rotation',lazy:async()=>({Component:(awa
 children.splice(13,0,{path:'vendor-assessment',lazy:async()=>({Component:(await import('../vendor-assessment/VendorAssessmentPage')).VendorAssessmentPage})});
 children.splice(14,0,{path:'recovery-drill',lazy:async()=>({Component:(await import('../recovery-drill/RecoveryDrillPage')).RecoveryDrillPage})});
 children.splice(15,0,{path:'legal-hold',lazy:async()=>({Component:(await import('../legal-hold/LegalHoldPage')).LegalHoldPage})});
+children.splice(16,0,{path:'alert-correlation',lazy:async()=>({Component:(await import('../alert-correlation/AlertCorrelationPage')).AlertCorrelationPage})});
 export const browserRouter = createBrowserRouter([{ path: '/', Component: AppShell, HydrateFallback: RouteLoading, children }]);
