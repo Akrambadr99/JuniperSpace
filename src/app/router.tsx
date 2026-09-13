@@ -11,4 +11,5 @@ children.splice(7,0,{path:'investigation-dossier',lazy:async()=>({Component:(awa
 children.splice(8,0,{path:'breach-notification',lazy:async()=>({Component:(await import('../breach-notification/BreachNotificationPage')).BreachNotificationPage})});
 children.splice(9,0,{path:'security-exceptions',lazy:async()=>({Component:(await import('../security-exceptions/SecurityExceptionsPage')).SecurityExceptionsPage})});
 children.splice(10,0,{path:'access-certification',lazy:async()=>({Component:(await import('../access-certification/AccessCertificationPage')).AccessCertificationPage})});
+children.splice(11,0,{path:'vulnerability-remediation',lazy:async()=>({Component:(await import('../vulnerability-remediation/VulnerabilityRemediationPage')).VulnerabilityRemediationPage})});
 export const browserRouter = createBrowserRouter([{ path: '/', Component: AppShell, HydrateFallback: RouteLoading, children }]);
