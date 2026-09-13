@@ -13,4 +13,5 @@ children.splice(9,0,{path:'security-exceptions',lazy:async()=>({Component:(await
 children.splice(10,0,{path:'access-certification',lazy:async()=>({Component:(await import('../access-certification/AccessCertificationPage')).AccessCertificationPage})});
 children.splice(11,0,{path:'vulnerability-remediation',lazy:async()=>({Component:(await import('../vulnerability-remediation/VulnerabilityRemediationPage')).VulnerabilityRemediationPage})});
 children.splice(12,0,{path:'certificate-rotation',lazy:async()=>({Component:(await import('../certificate-rotation/CertificateRotationPage')).CertificateRotationPage})});
+children.splice(13,0,{path:'vendor-assessment',lazy:async()=>({Component:(await import('../vendor-assessment/VendorAssessmentPage')).VendorAssessmentPage})});
 export const browserRouter = createBrowserRouter([{ path: '/', Component: AppShell, HydrateFallback: RouteLoading, children }]);
