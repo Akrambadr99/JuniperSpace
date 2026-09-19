@@ -4,7 +4,7 @@ export interface BreachNotificationState {
   incident: { id: string; version: number; status: 'contained' | 'notified'; affectedSubjects: number; discoveredOn: string };
   evidence: { id: string; version: number; status: 'sealed' | 'released'; checksum: string };
   legal: { jurisdiction: string; deadline: string; threshold: number; assessmentVersion: number };
-  notice: null | { id: string; status: 'draft' | 'evidence-attached' | 'legally-approved' | 'released' | 'verified' | 'cancelled'; owner: string; incidentVersion: number; evidenceVersion: number; assessmentVersion: number; recipients: number; evidenceCustodian?: string; counsel?: string; releaseId?: string };
+  notice: null | { id: string; status: 'draft' | 'evidence-attached' | 'legally-approved' | 'delivery-partial' | 'released' | 'verified' | 'cancelled'; owner: string; incidentVersion: number; evidenceVersion: number; assessmentVersion: number; recipients: number; evidenceCustodian?: string; counsel?: string; releaseId?: string };
   delivery: { regulator: 'pending' | 'accepted'; subjects: 'pending' | 'delivered'; delivered: number; failures: number };
   events: { id: string; action: string; actor: string; detail: string }[];
 }
@@ -51,9 +51,16 @@ export function approveNotification(state: BreachNotificationState, command: Met
 export function releaseNotification(state: BreachNotificationState, command: Meta & { delivered: number; failures: number }) {
   assert(command.actor.role === 'Communications Lead', 'Only communications leads can release notifications.');
   const next = begin(state, command), current = notice(next);
-  assert(current.status === 'legally-approved', 'Legal approval is required before release.'); assert(Number.isInteger(command.delivered) && Number.isInteger(command.failures) && command.delivered + command.failures === current.recipients, 'Delivery totals must reconcile to affected subjects.'); assert(command.failures === 0, 'Failed subject deliveries must be retried before release completes.'); assertVersions(next);
-  current.status = 'released'; current.releaseId = command.id; next.delivery.regulator = 'accepted'; next.delivery.subjects = 'delivered'; next.delivery.delivered = command.delivered; next.delivery.failures = command.failures;
-  return finish(next, command, 'breach-notification-released', `${String(command.delivered)} recipients`);
+  assert(current.status === 'legally-approved', 'Legal approval is required before release.'); assert(Number.isInteger(command.delivered) && Number.isInteger(command.failures) && command.delivered >= 0 && command.failures >= 0 && command.delivered + command.failures === current.recipients, 'Delivery totals must reconcile to affected subjects.'); assertVersions(next);
+  current.status = command.failures === 0 ? 'released' : 'delivery-partial'; current.releaseId = command.id; next.delivery.regulator = 'accepted'; next.delivery.subjects = command.failures === 0 ? 'delivered' : 'pending'; next.delivery.delivered = command.delivered; next.delivery.failures = command.failures;
+  return finish(next, command, command.failures === 0 ? 'breach-notification-released' : 'breach-notification-partially-delivered', `${String(command.delivered)} delivered:${String(command.failures)} failed`);
+}
+export function retryFailedNotification(state: BreachNotificationState, command: Meta & { delivered: number; failures: number }) {
+  assert(command.actor.role === 'Communications Lead', 'Only communications leads can retry notification delivery.');
+  const next = begin(state, command), current = notice(next), pending = next.delivery.failures;
+  assert(current.status === 'delivery-partial' && pending > 0, 'A partially delivered notification is required.'); assert(Number.isInteger(command.delivered) && Number.isInteger(command.failures) && command.delivered >= 0 && command.failures >= 0 && command.delivered + command.failures === pending, 'Retry totals must reconcile to failed recipients.'); assertVersions(next);
+  next.delivery.delivered += command.delivered; next.delivery.failures = command.failures; next.delivery.subjects = command.failures === 0 ? 'delivered' : 'pending'; if (command.failures === 0) current.status = 'released';
+  return finish(next, command, command.failures === 0 ? 'breach-notification-retry-completed' : 'breach-notification-retry-partial', `${String(command.delivered)} recovered:${String(command.failures)} failed`);
 }
 export function verifyNotification(state: BreachNotificationState, command: Meta) {
   assert(command.actor.role === 'Auditor', 'Only auditors can verify notification completion.');
