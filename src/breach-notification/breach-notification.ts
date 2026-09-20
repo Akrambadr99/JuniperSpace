@@ -1,8 +1,9 @@
+import type { State as RetentionState } from '../evidence-retention/evidence-retention';
 export type NotificationRole = 'Incident Commander' | 'Privacy Counsel' | 'Evidence Custodian' | 'Communications Lead' | 'Auditor';
 export interface BreachNotificationState {
   revision: number;
   incident: { id: string; version: number; status: 'contained' | 'notified'; affectedSubjects: number; discoveredOn: string };
-  evidence: { id: string; version: number; status: 'sealed' | 'released'; checksum: string };
+  evidence: { id: string; version: number; status: 'sealed' | 'released'; checksum: string; retentionEvidenceId: string; retentionRevision: number };
   legal: { jurisdiction: string; deadline: string; threshold: number; assessmentVersion: number };
   notice: null | { id: string; status: 'draft' | 'evidence-attached' | 'legally-approved' | 'delivery-partial' | 'released' | 'verified' | 'cancelled'; owner: string; incidentVersion: number; evidenceVersion: number; assessmentVersion: number; recipients: number; evidenceCustodian?: string; counsel?: string; releaseId?: string };
   delivery: { regulator: 'pending' | 'accepted'; subjects: 'pending' | 'delivered'; delivered: number; failures: number };
@@ -11,7 +12,7 @@ export interface BreachNotificationState {
 export const initialBreachNotificationState: BreachNotificationState = {
   revision: 0,
   incident: { id: 'INC-204', version: 8, status: 'contained', affectedSubjects: 126, discoveredOn: '2026-09-11' },
-  evidence: { id: 'EVID-204', version: 5, status: 'sealed', checksum: 'sha256:8cf72a' },
+  evidence: { id: 'EVID-204', version: 5, status: 'sealed', checksum: 'sha256:8cf72a', retentionEvidenceId: 'evidence-memory', retentionRevision: 7 },
   legal: { jurisdiction: 'EG-DPL', deadline: '2026-09-14', threshold: 100, assessmentVersion: 3 },
   notice: null,
   delivery: { regulator: 'pending', subjects: 'pending', delivered: 0, failures: 0 },
@@ -47,6 +48,14 @@ export function approveNotification(state: BreachNotificationState, command: Met
   assert(current.status === 'evidence-attached', 'Sealed evidence must be attached first.'); assert(command.actor.id !== current.evidenceCustodian && command.actor.id !== current.owner, 'Legal approval must be independent.'); assert(command.rationale.trim().length >= 24, 'Legal rationale must contain at least 24 characters.'); assertVersions(next);
   current.status = 'legally-approved'; current.counsel = command.actor.id;
   return finish(next, command, 'breach-notification-approved', command.rationale.trim());
+}
+export function synchronizeRetainedEvidence(state: BreachNotificationState, retention: RetentionState, command: Meta) {
+  assert(command.actor.role === 'Evidence Custodian', 'Only evidence custodians can synchronize retained evidence.'); const next = begin(state, command);
+  assert(retention.evidence.id === next.evidence.retentionEvidenceId && retention.evidence.status === 'held' && retention.hold?.status === 'applied', 'Applied hold for linked evidence is required.'); assert(retention.evidence.revision > next.evidence.retentionRevision, 'Retained evidence is already current.');
+  assert(!next.notice || !['delivery-partial', 'released', 'verified'].includes(next.notice.status), 'Released notification evidence cannot be replaced.');
+  next.evidence.checksum = retention.evidence.digest; next.evidence.version += 1; next.evidence.retentionRevision = retention.evidence.revision;
+  if (next.notice) { next.notice.status = 'draft'; next.notice.evidenceVersion = next.evidence.version; delete next.notice.evidenceCustodian; delete next.notice.counsel; }
+  return finish(next, command, 'retained-evidence-synchronized', retention.evidence.digest);
 }
 export function releaseNotification(state: BreachNotificationState, command: Meta & { delivered: number; failures: number }) {
   assert(command.actor.role === 'Communications Lead', 'Only communications leads can release notifications.');
