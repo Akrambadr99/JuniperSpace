@@ -5,8 +5,9 @@ export interface BreachNotificationState {
   incident: { id: string; version: number; status: 'contained' | 'notified'; affectedSubjects: number; discoveredOn: string };
   evidence: { id: string; version: number; status: 'sealed' | 'released'; checksum: string; retentionEvidenceId: string; retentionRevision: number };
   legal: { jurisdiction: string; deadline: string; threshold: number; assessmentVersion: number };
-  notice: null | { id: string; status: 'draft' | 'evidence-attached' | 'legally-approved' | 'delivery-partial' | 'released' | 'verified' | 'cancelled'; owner: string; incidentVersion: number; evidenceVersion: number; assessmentVersion: number; recipients: number; evidenceCustodian?: string; counsel?: string; releaseId?: string };
+  notice: null | { id: string; status: 'draft' | 'evidence-attached' | 'legally-approved' | 'delivery-partial' | 'released' | 'verified' | 'acknowledged' | 'cancelled'; owner: string; incidentVersion: number; evidenceVersion: number; assessmentVersion: number; recipients: number; evidenceCustodian?: string; counsel?: string; releaseId?: string };
   delivery: { regulator: 'pending' | 'accepted'; subjects: 'pending' | 'delivered'; delivered: number; failures: number };
+  regulatorAcknowledgements: { id: string; reference: string; releaseId: string; immutable: true }[];
   events: { id: string; action: string; actor: string; detail: string }[];
 }
 export const initialBreachNotificationState: BreachNotificationState = {
@@ -15,7 +16,7 @@ export const initialBreachNotificationState: BreachNotificationState = {
   evidence: { id: 'EVID-204', version: 5, status: 'sealed', checksum: 'sha256:8cf72a', retentionEvidenceId: 'evidence-memory', retentionRevision: 7 },
   legal: { jurisdiction: 'EG-DPL', deadline: '2026-09-14', threshold: 100, assessmentVersion: 3 },
   notice: null,
-  delivery: { regulator: 'pending', subjects: 'pending', delivered: 0, failures: 0 },
+  delivery: { regulator: 'pending', subjects: 'pending', delivered: 0, failures: 0 }, regulatorAcknowledgements: [],
   events: [],
 };
 interface Meta { id: string; expectedRevision: number; actor: { id: string; role: NotificationRole } }
@@ -78,5 +79,6 @@ export function verifyNotification(state: BreachNotificationState, command: Meta
   current.status = 'verified'; next.incident.status = 'notified'; next.incident.version += 1;
   return finish(next, command, 'breach-notification-verified', current.releaseId ?? 'release');
 }
+export function recordRegulatorAcknowledgement(state: BreachNotificationState, command: Meta & { reference: string }) { assert(command.actor.role === 'Privacy Counsel', 'Only privacy counsel can record regulator acknowledgement.'); const next = begin(state, command), current = notice(next); assert(current.status === 'verified' && current.releaseId, 'Verified notification release is required.'); assert(/^REG-[A-Z0-9]{9,12}$/.test(command.reference), 'Valid regulator acknowledgement reference is required.'); assert(next.regulatorAcknowledgements.length === 0, 'Regulator acknowledgement was already recorded.'); next.regulatorAcknowledgements.push({ id: `${command.id}-acknowledgement`, reference: command.reference, releaseId: current.releaseId, immutable: true }); current.status = 'acknowledged'; return finish(next, command, 'regulator-acknowledgement-recorded', command.reference); }
 export function cancelNotification(state: BreachNotificationState, command: Meta & { reason: string }) { assert(command.actor.role === 'Incident Commander', 'Only incident commanders can cancel notifications.'); const next = begin(state, command), current = notice(next); assert(command.actor.id === current.owner && ['draft', 'evidence-attached'].includes(current.status), 'Only the owner can cancel before legal approval.'); assert(command.reason.trim().length >= 16, 'Cancellation reason must contain at least 16 characters.'); current.status = 'cancelled'; return finish(next, command, 'notification-dossier-cancelled', command.reason.trim()); }
 export class BreachNotificationRepository { static key = 'sentinelarc:breach-notification:v1'; private storage: Pick<Storage, 'getItem' | 'setItem'>; constructor(storage: Pick<Storage, 'getItem' | 'setItem'>) { this.storage = storage; } read() { const raw = this.storage.getItem(BreachNotificationRepository.key); return raw ? JSON.parse(raw) as BreachNotificationState : structuredClone(initialBreachNotificationState); } commit(expected: number, operation: (state: BreachNotificationState) => BreachNotificationState) { const current = this.read(); assert(current.revision === expected, 'Another session changed notification delivery. Refresh before retrying.'); const next = operation(current); this.storage.setItem(BreachNotificationRepository.key, JSON.stringify(next)); return next; } }
