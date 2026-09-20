@@ -108,3 +108,6 @@ test('corrected retained evidence resets breach notice legal approval',async({pa
 
 
 test('shows regulator response readiness and evidence blockers',async({page})=>{await page.goto('/breach-notification');const readiness=page.getByRole('region',{name:'Regulator response readiness'});await expect(readiness).toContainText('REG-FCA-204 · FCA · review-due');await expect(readiness).toContainText('Missing EVD-DEVICE-7');});
+
+
+test('compliance lead reassigns urgent legal review before the deadline',async({page})=>{await page.goto('/breach-notification');await page.getByLabel('Response control role').selectOption('Compliance Lead');await page.getByRole('button',{name:'Reassign urgent legal review'}).click();await expect(page.getByRole('status')).toContainText('before the response deadline');await expect(page.getByRole('list',{name:'Legal review schedule history'})).toContainText('M. Chen to Senior privacy counsel');await page.reload();await expect(page.getByRole('list',{name:'Legal review schedule history'})).toContainText('deadline 2026-10-21');});
