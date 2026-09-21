@@ -80,10 +80,31 @@ export function queryResponseEvidenceTimeline(state: RegulatorResponseState, res
   ].sort((a, b) => a.occurredOn.localeCompare(b.occurredOn))
 }
 
-export class RegulatorResponseRepository {
+export function getDispatchRecoveryStatus(state: RegulatorResponseState, responseId: string, releaseReference: string) {
+  const attempts = state.dispatchAttempts.filter((item) => item.responseId === responseId && item.releaseReference === releaseReference)
+  const latest = attempts.at(-1) ?? null
+  const succeeded = attempts.some((item) => item.status === 'succeeded')
+  return {
+    attempts,
+    latest,
+    attemptsUsed: attempts.length,
+    attemptsRemaining: Math.max(0, dispatchRetryPolicy.maximumAttemptsPerRelease - attempts.length),
+    canRetry: !succeeded && latest?.status === 'failed' && latest.retryEligible && attempts.length < dispatchRetryPolicy.maximumAttemptsPerRelease,
+    retryOf: !succeeded && latest?.status === 'failed' ? latest.id : null,
+  }
+}
+
+export interface RegulatorResponsePersistence { load(): RegulatorResponseState | null; save(state: RegulatorResponseState): void }
+export class BrowserRegulatorResponsePersistence implements RegulatorResponsePersistence {
   static key = 'sentinelarc:regulator-response-control:v2'
   private readonly storage: Pick<Storage, 'getItem' | 'setItem'>
   constructor(storage: Pick<Storage, 'getItem' | 'setItem'>) { this.storage = storage }
-  read(): RegulatorResponseState { const raw = this.storage.getItem(RegulatorResponseRepository.key); return raw ? JSON.parse(raw) as RegulatorResponseState : structuredClone(initialRegulatorResponseState) }
-  dispatch(command: RescheduleLegalReview | RecordResponseDispatch | CloseRegulatoryObligation) { const current = this.read(); const next = 'regulatorAcknowledgement' in command ? closeRegulatoryObligation(current, command) : 'releaseRevision' in command ? recordResponseDispatchAttempt(current, command) : rescheduleLegalReview(current, command); if (next !== current) this.storage.setItem(RegulatorResponseRepository.key, JSON.stringify(next)); return next }
+  load() { const raw = this.storage.getItem(BrowserRegulatorResponsePersistence.key); if (!raw) return null; const saved = JSON.parse(raw) as Partial<RegulatorResponseState>; return { ...(saved as RegulatorResponseState), reviewHistory: saved.reviewHistory ?? [], dispatchAttempts: saved.dispatchAttempts ?? [], closures: saved.closures ?? [] } }
+  save(state: RegulatorResponseState) { this.storage.setItem(BrowserRegulatorResponsePersistence.key, JSON.stringify(state)) }
+}
+export class RegulatorResponseRepository {
+  private readonly persistence: RegulatorResponsePersistence
+  constructor(persistence: RegulatorResponsePersistence | Pick<Storage, 'getItem' | 'setItem'>) { this.persistence = 'load' in persistence ? persistence : new BrowserRegulatorResponsePersistence(persistence) }
+  read(): RegulatorResponseState { return this.persistence.load() ?? structuredClone(initialRegulatorResponseState) }
+  dispatch(command: RescheduleLegalReview | RecordResponseDispatch | CloseRegulatoryObligation) { const current = this.read(); const next = 'regulatorAcknowledgement' in command ? closeRegulatoryObligation(current, command) : 'releaseRevision' in command ? recordResponseDispatchAttempt(current, command) : rescheduleLegalReview(current, command); if (next !== current) this.persistence.save(next); return next }
 }
