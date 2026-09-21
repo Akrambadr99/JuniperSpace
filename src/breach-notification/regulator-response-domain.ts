@@ -41,7 +41,7 @@ export function recordResponseDispatchAttempt(state: RegulatorResponseState, com
   const attempts = state.dispatchAttempts.filter((item) => item.responseId === command.responseId && item.releaseReference === command.releaseReference && item.releaseRevision === command.releaseRevision)
   if (attempts.some((item) => item.status === 'succeeded')) throw new Error('This approved release was already dispatched successfully.')
   if (attempts.length >= dispatchRetryPolicy.maximumAttemptsPerRelease) throw new Error('Dispatch retry limit reached for this release revision.')
-  if (command.retryOf) { const previous = releaseAttempts.find((item) => item.id === command.retryOf); if (previous?.status !== 'failed' || !previous.retryEligible || previous.releaseRevision !== command.releaseRevision) throw new Error('Dispatch retry must reference an eligible failed attempt for this release revision.') }
+  if (command.retryOf) { const previous = releaseAttempts.find((item) => item.id === command.retryOf); if (previous?.status !== 'failed' || !previous.retryEligible || previous.releaseRevision !== command.releaseRevision) throw new Error('Dispatch retry must reference an eligible failed attempt for this release revision.'); if (state.dispatchAttempts.some((item) => item.responseId === command.responseId && item.releaseRevision > previous.releaseRevision)) throw new Error('A newer approved release superseded this failed dispatch attempt.') }
   if (command.status === 'failed' ? !command.failureClassification : !command.dispatchEvidence) throw new Error('Dispatch result evidence is incomplete.')
   const next = structuredClone(state)
   next.dispatchAttempts.push({ ...command, attemptNumber: attempts.length + 1, immutable: true })
@@ -84,13 +84,16 @@ export function getDispatchRecoveryStatus(state: RegulatorResponseState, respons
   const attempts = state.dispatchAttempts.filter((item) => item.responseId === responseId && item.releaseReference === releaseReference)
   const latest = attempts.at(-1) ?? null
   const succeeded = attempts.some((item) => item.status === 'succeeded')
+  const supersedingAttempt = latest ? state.dispatchAttempts.find((item) => item.responseId === responseId && item.releaseReference !== releaseReference && item.releaseRevision > latest.releaseRevision) ?? null : null
   return {
     attempts,
     latest,
     attemptsUsed: attempts.length,
     attemptsRemaining: Math.max(0, dispatchRetryPolicy.maximumAttemptsPerRelease - attempts.length),
-    canRetry: !succeeded && latest?.status === 'failed' && latest.retryEligible && attempts.length < dispatchRetryPolicy.maximumAttemptsPerRelease,
+    canRetry: !succeeded && !supersedingAttempt && latest?.status === 'failed' && latest.retryEligible && attempts.length < dispatchRetryPolicy.maximumAttemptsPerRelease,
     retryOf: !succeeded && latest?.status === 'failed' ? latest.id : null,
+    superseded: Boolean(supersedingAttempt),
+    supersededByReleaseReference: supersedingAttempt?.releaseReference ?? null,
   }
 }
 
