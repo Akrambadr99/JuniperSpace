@@ -4,8 +4,10 @@ export type RegulatorControlRole = 'Compliance Analyst' | 'Compliance Lead'
 export interface LegalReviewChange { id: string; responseId: string; previousReviewer: string | null; reviewer: string; previousReviewOn: string | null; reviewOn: string; reason: string; deadline: string; immutable: true }
 export interface RegulatoryClosure { id: string; responseId: string; reviewChangeId: string; evidenceIds: string[]; legalApproval: string; complianceApproval: string; releaseReference: string; dispatchEvidence: string; regulatorAcknowledgement: string; outstandingFollowUps: 0; closedBy: string; closedOn: string; immutable: true }
 export interface ResponseDispatchAttempt { id: string; responseId: string; releaseReference: string; releaseRevision: number; attemptNumber: number; status: 'failed' | 'succeeded'; failureClassification: string | null; retryEligible: boolean; actor: string; attemptedOn: string; retryOf: string | null; dispatchEvidence: string | null; immutable: true }
-export interface RegulatorResponseState { revision: number; responses: RegulatorResponseRecord[]; reviewHistory: LegalReviewChange[]; dispatchAttempts: ResponseDispatchAttempt[]; closures: RegulatoryClosure[] }
-export const initialRegulatorResponseState: RegulatorResponseState = { revision: 0, responses: structuredClone(seededRegulatorResponses), reviewHistory: [], dispatchAttempts: [], closures: [] }
+export type RegulatoryFollowUpStage = 'opened' | 'drafted' | 'approved' | 'dispatched' | 'acknowledged' | 'closed'
+export interface RegulatoryFollowUpEvent { id: string; obligationId: string; responseId: string; releaseReference: string; obligationType: 'information-request' | 'remediation-update' | 'evidence-supplement'; deadline: string; owner: string; stage: RegulatoryFollowUpStage; evidenceReference: string; actor: string; occurredOn: string; sourceRevision: number; immutable: true }
+export interface RegulatorResponseState { revision: number; responses: RegulatorResponseRecord[]; reviewHistory: LegalReviewChange[]; dispatchAttempts: ResponseDispatchAttempt[]; followUpEvents: RegulatoryFollowUpEvent[]; closures: RegulatoryClosure[] }
+export const initialRegulatorResponseState: RegulatorResponseState = { revision: 0, responses: structuredClone(seededRegulatorResponses), reviewHistory: [], dispatchAttempts: [], followUpEvents: [], closures: [] }
 export const dispatchRetryPolicy = { maximumAttemptsPerRelease: 3 } as const
 interface RescheduleLegalReview { id: string; expectedRevision: number; role: RegulatorControlRole; responseId: string; reviewer: string; reviewOn: string; asOf: string; reason: string }
 
@@ -72,6 +74,34 @@ export function closeRegulatoryObligation(state: RegulatorResponseState, command
   return next
 }
 
+interface RecordRegulatoryFollowUp { id: string; expectedRevision: number; role: RegulatorControlRole; obligationId: string; responseId: string; releaseReference: string; obligationType: RegulatoryFollowUpEvent['obligationType']; deadline: string; owner: string; stage: RegulatoryFollowUpStage; evidenceReference: string; actor: string; occurredOn: string }
+export function recordRegulatoryFollowUp(state: RegulatorResponseState, command: RecordRegulatoryFollowUp) {
+  if (state.followUpEvents.some((item) => item.id === command.id)) return state
+  if (state.revision !== command.expectedRevision) throw new Error('Regulator response changed. Refresh before recording follow-up work.')
+  if (command.role !== 'Compliance Lead') throw new Error('Only the compliance lead can control regulator follow-up obligations.')
+  const closure = state.closures.find((item) => item.responseId === command.responseId && item.releaseReference === command.releaseReference)
+  if (!closure) throw new Error('Follow-up must reference the acknowledged immutable regulator release.')
+  const history = state.followUpEvents.filter((item) => item.obligationId === command.obligationId)
+  const order: RegulatoryFollowUpStage[] = ['opened', 'drafted', 'approved', 'dispatched', 'acknowledged', 'closed']
+  const previous = history.at(-1)
+  if ((history.length === 0 && command.stage !== 'opened') || (previous && order.indexOf(command.stage) !== order.indexOf(previous.stage) + 1)) throw new Error('Regulator follow-up stages must preserve approval, dispatch, acknowledgement, and closure order.')
+  if (!command.deadline || !command.owner || !command.evidenceReference.trim()) throw new Error('Follow-up deadline, owner, and stage evidence are required.')
+  const next = structuredClone(state)
+  next.followUpEvents.push({ ...command, evidenceReference: command.evidenceReference.trim(), sourceRevision: state.revision, immutable: true })
+  next.revision += 1
+  return next
+}
+
+export function getRegulatoryFollowUpObligations(state: RegulatorResponseState, asOf: string) {
+  const ids = [...new Set(state.followUpEvents.map((item) => item.obligationId))]
+  return ids.map((obligationId) => {
+    const history = state.followUpEvents.filter((item) => item.obligationId === obligationId)
+    const latest = history.at(-1)
+    if (!latest) throw new Error('Regulator follow-up history disappeared during read.')
+    return { obligationId, responseId: latest.responseId, releaseReference: latest.releaseReference, obligationType: latest.obligationType, deadline: latest.deadline, owner: latest.owner, status: latest.stage, overdue: latest.stage !== 'closed' && latest.deadline < asOf, history }
+  })
+}
+
 export function queryResponseEvidenceTimeline(state: RegulatorResponseState, responseId: string) {
   return [
     ...state.reviewHistory.filter((item) => item.responseId === responseId).map((item) => ({ kind: 'legal-review' as const, occurredOn: item.reviewOn, evidence: item.reason })),
@@ -102,12 +132,12 @@ export class BrowserRegulatorResponsePersistence implements RegulatorResponsePer
   static key = 'sentinelarc:regulator-response-control:v2'
   private readonly storage: Pick<Storage, 'getItem' | 'setItem'>
   constructor(storage: Pick<Storage, 'getItem' | 'setItem'>) { this.storage = storage }
-  load() { const raw = this.storage.getItem(BrowserRegulatorResponsePersistence.key); if (!raw) return null; const saved = JSON.parse(raw) as Partial<RegulatorResponseState>; return { ...(saved as RegulatorResponseState), reviewHistory: saved.reviewHistory ?? [], dispatchAttempts: saved.dispatchAttempts ?? [], closures: saved.closures ?? [] } }
+  load() { const raw = this.storage.getItem(BrowserRegulatorResponsePersistence.key); if (!raw) return null; const saved = JSON.parse(raw) as Partial<RegulatorResponseState>; return { ...(saved as RegulatorResponseState), reviewHistory: saved.reviewHistory ?? [], dispatchAttempts: saved.dispatchAttempts ?? [], followUpEvents: saved.followUpEvents ?? [], closures: saved.closures ?? [] } }
   save(state: RegulatorResponseState) { this.storage.setItem(BrowserRegulatorResponsePersistence.key, JSON.stringify(state)) }
 }
 export class RegulatorResponseRepository {
   private readonly persistence: RegulatorResponsePersistence
   constructor(persistence: RegulatorResponsePersistence | Pick<Storage, 'getItem' | 'setItem'>) { this.persistence = 'load' in persistence ? persistence : new BrowserRegulatorResponsePersistence(persistence) }
   read(): RegulatorResponseState { return this.persistence.load() ?? structuredClone(initialRegulatorResponseState) }
-  dispatch(command: RescheduleLegalReview | RecordResponseDispatch | CloseRegulatoryObligation) { const current = this.read(); const next = 'regulatorAcknowledgement' in command ? closeRegulatoryObligation(current, command) : 'releaseRevision' in command ? recordResponseDispatchAttempt(current, command) : rescheduleLegalReview(current, command); if (next !== current) this.persistence.save(next); return next }
+  dispatch(command: RescheduleLegalReview | RecordResponseDispatch | CloseRegulatoryObligation | RecordRegulatoryFollowUp) { const current = this.read(); const next = 'obligationId' in command ? recordRegulatoryFollowUp(current, command) : 'regulatorAcknowledgement' in command ? closeRegulatoryObligation(current, command) : 'releaseRevision' in command ? recordResponseDispatchAttempt(current, command) : rescheduleLegalReview(current, command); if (next !== current) this.persistence.save(next); return next }
 }
