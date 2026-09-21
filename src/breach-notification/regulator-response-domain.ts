@@ -3,9 +3,10 @@ import { seededRegulatorResponses, type RegulatorResponseRecord } from './regula
 export type RegulatorControlRole = 'Compliance Analyst' | 'Compliance Lead'
 export interface LegalReviewChange { id: string; responseId: string; previousReviewer: string | null; reviewer: string; previousReviewOn: string | null; reviewOn: string; reason: string; deadline: string; immutable: true }
 export interface RegulatoryClosure { id: string; responseId: string; reviewChangeId: string; evidenceIds: string[]; legalApproval: string; complianceApproval: string; releaseReference: string; dispatchEvidence: string; regulatorAcknowledgement: string; outstandingFollowUps: 0; closedBy: string; closedOn: string; immutable: true }
-export interface ResponseDispatchAttempt { id: string; responseId: string; releaseReference: string; dispatchEvidence: string; status: 'succeeded'; attemptedOn: string; immutable: true }
+export interface ResponseDispatchAttempt { id: string; responseId: string; releaseReference: string; releaseRevision: number; attemptNumber: number; status: 'failed' | 'succeeded'; failureClassification: string | null; retryEligible: boolean; actor: string; attemptedOn: string; retryOf: string | null; dispatchEvidence: string | null; immutable: true }
 export interface RegulatorResponseState { revision: number; responses: RegulatorResponseRecord[]; reviewHistory: LegalReviewChange[]; dispatchAttempts: ResponseDispatchAttempt[]; closures: RegulatoryClosure[] }
 export const initialRegulatorResponseState: RegulatorResponseState = { revision: 0, responses: structuredClone(seededRegulatorResponses), reviewHistory: [], dispatchAttempts: [], closures: [] }
+export const dispatchRetryPolicy = { maximumAttemptsPerRelease: 3 } as const
 interface RescheduleLegalReview { id: string; expectedRevision: number; role: RegulatorControlRole; responseId: string; reviewer: string; reviewOn: string; asOf: string; reason: string }
 
 export function rescheduleLegalReview(state: RegulatorResponseState, command: RescheduleLegalReview) {
@@ -27,6 +28,27 @@ export function rescheduleLegalReview(state: RegulatorResponseState, command: Re
   return next
 }
 
+interface RecordResponseDispatch { id: string; expectedRevision: number; role: RegulatorControlRole; responseId: string; releaseReference: string; releaseRevision: number; status: 'failed' | 'succeeded'; failureClassification: string | null; retryEligible: boolean; actor: string; attemptedOn: string; retryOf: string | null; dispatchEvidence: string | null }
+export function recordResponseDispatchAttempt(state: RegulatorResponseState, command: RecordResponseDispatch) {
+  if (state.dispatchAttempts.some((item) => item.id === command.id)) return state
+  if (state.revision !== command.expectedRevision) throw new Error('Regulator response changed. Refresh before dispatching the approved release.')
+  if (command.role !== 'Compliance Lead') throw new Error('Only the compliance lead can dispatch an approved regulator response.')
+  const response = state.responses.find((item) => item.responseId === command.responseId)
+  const review = [...state.reviewHistory].reverse().find((item) => item.responseId === command.responseId)
+  if (!response || !review || response.released) throw new Error('A reviewed unreleased response is required before dispatch.')
+  const releaseAttempts = state.dispatchAttempts.filter((item) => item.responseId === command.responseId && item.releaseReference === command.releaseReference)
+  if (releaseAttempts.length === 0 && command.releaseRevision !== state.revision) throw new Error('Dispatch targets a stale approved release revision.')
+  const attempts = state.dispatchAttempts.filter((item) => item.responseId === command.responseId && item.releaseReference === command.releaseReference && item.releaseRevision === command.releaseRevision)
+  if (attempts.some((item) => item.status === 'succeeded')) throw new Error('This approved release was already dispatched successfully.')
+  if (attempts.length >= dispatchRetryPolicy.maximumAttemptsPerRelease) throw new Error('Dispatch retry limit reached for this release revision.')
+  if (command.retryOf) { const previous = releaseAttempts.find((item) => item.id === command.retryOf); if (previous?.status !== 'failed' || !previous.retryEligible || previous.releaseRevision !== command.releaseRevision) throw new Error('Dispatch retry must reference an eligible failed attempt for this release revision.') }
+  if (command.status === 'failed' ? !command.failureClassification : !command.dispatchEvidence) throw new Error('Dispatch result evidence is incomplete.')
+  const next = structuredClone(state)
+  next.dispatchAttempts.push({ ...command, attemptNumber: attempts.length + 1, immutable: true })
+  next.revision += 1
+  return next
+}
+
 interface CloseRegulatoryObligation { id: string; expectedRevision: number; role: RegulatorControlRole; responseId: string; evidenceIds: string[]; legalApproval: string; complianceApproval: string; releaseReference: string; dispatchEvidence: string; regulatorAcknowledgement: string; outstandingFollowUps: number; closedBy: string; closedOn: string }
 export function closeRegulatoryObligation(state: RegulatorResponseState, command: CloseRegulatoryObligation) {
   if (state.closures.some((item) => item.id === command.id)) return state
@@ -37,10 +59,11 @@ export function closeRegulatoryObligation(state: RegulatorResponseState, command
   if (!response || !review || response.released) throw new Error('A reviewed unreleased response is required.')
   if (command.evidenceIds.length < response.missingEvidence.length || !command.legalApproval || !command.complianceApproval) throw new Error('Evidence plus independent legal and compliance approvals are required.')
   if (!command.releaseReference || !command.dispatchEvidence || !command.regulatorAcknowledgement || command.outstandingFollowUps !== 0) throw new Error('Release, dispatch, acknowledgement, and follow-up evidence must be complete.')
+  const dispatch = [...state.dispatchAttempts].reverse().find((item) => item.responseId === command.responseId && item.releaseReference === command.releaseReference && item.status === 'succeeded' && item.dispatchEvidence === command.dispatchEvidence)
+  if (!dispatch) throw new Error('A successful durable dispatch attempt is required before acknowledgement and closure.')
   const next = structuredClone(state)
   const target = next.responses.find((item) => item.responseId === response.responseId)
   if (!target) throw new Error('Regulator response disappeared during closure.')
-  next.dispatchAttempts.push({ id: `${command.id}:dispatch`, responseId: command.responseId, releaseReference: command.releaseReference, dispatchEvidence: command.dispatchEvidence, status: 'succeeded', attemptedOn: command.closedOn, immutable: true })
   next.closures.push({ ...command, outstandingFollowUps: 0, reviewChangeId: review.id, evidenceIds: [...command.evidenceIds], immutable: true })
   target.missingEvidence = []
   target.amendmentCompleted = target.amendmentRequired
@@ -52,7 +75,7 @@ export function closeRegulatoryObligation(state: RegulatorResponseState, command
 export function queryResponseEvidenceTimeline(state: RegulatorResponseState, responseId: string) {
   return [
     ...state.reviewHistory.filter((item) => item.responseId === responseId).map((item) => ({ kind: 'legal-review' as const, occurredOn: item.reviewOn, evidence: item.reason })),
-    ...state.dispatchAttempts.filter((item) => item.responseId === responseId).map((item) => ({ kind: 'dispatch' as const, occurredOn: item.attemptedOn, evidence: item.dispatchEvidence })),
+    ...state.dispatchAttempts.filter((item) => item.responseId === responseId).map((item) => ({ kind: 'dispatch' as const, occurredOn: item.attemptedOn, evidence: item.dispatchEvidence ?? item.failureClassification ?? 'dispatch failed' })),
     ...state.closures.filter((item) => item.responseId === responseId).map((item) => ({ kind: 'closure' as const, occurredOn: item.closedOn, evidence: item.regulatorAcknowledgement })),
   ].sort((a, b) => a.occurredOn.localeCompare(b.occurredOn))
 }
@@ -62,5 +85,5 @@ export class RegulatorResponseRepository {
   private readonly storage: Pick<Storage, 'getItem' | 'setItem'>
   constructor(storage: Pick<Storage, 'getItem' | 'setItem'>) { this.storage = storage }
   read(): RegulatorResponseState { const raw = this.storage.getItem(RegulatorResponseRepository.key); return raw ? JSON.parse(raw) as RegulatorResponseState : structuredClone(initialRegulatorResponseState) }
-  dispatch(command: RescheduleLegalReview | CloseRegulatoryObligation) { const current = this.read(); const next = 'dispatchEvidence' in command ? closeRegulatoryObligation(current, command) : rescheduleLegalReview(current, command); if (next !== current) this.storage.setItem(RegulatorResponseRepository.key, JSON.stringify(next)); return next }
+  dispatch(command: RescheduleLegalReview | RecordResponseDispatch | CloseRegulatoryObligation) { const current = this.read(); const next = 'regulatorAcknowledgement' in command ? closeRegulatoryObligation(current, command) : 'releaseRevision' in command ? recordResponseDispatchAttempt(current, command) : rescheduleLegalReview(current, command); if (next !== current) this.storage.setItem(RegulatorResponseRepository.key, JSON.stringify(next)); return next }
 }
