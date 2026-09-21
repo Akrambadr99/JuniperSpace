@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { regulatorResponseReadiness } from "./regulator-readiness";
 import {
+  compareRegulatorFollowUpDrafts,
   getDispatchRecoveryStatus,
   getRegulatoryFollowUpObligations,
   RegulatorResponseRepository,
@@ -15,6 +16,7 @@ export function RegulatorResponseControl() {
   const [state, setState] = useState(() => repository.read());
   const [role, setRole] = useState<RegulatorControlRole>("Compliance Analyst");
   const [message, setMessage] = useState("");
+  const [draft, setDraft] = useState({ requested: "Provide current sealed device evidence", statement: "The corrected device evidence confirms the containment sequence.", evidence: "EVD-DEVICE-7", reason: "", owner: "Regulatory liaison" });
   const feedback = useRef<HTMLParagraphElement>(null);
   const readiness = regulatorResponseReadiness(state.responses, "2026-10-20");
   const recovery = getDispatchRecoveryStatus(
@@ -23,6 +25,8 @@ export function RegulatorResponseControl() {
     "RELEASE-204-R1",
   );
   const followUps = getRegulatoryFollowUpObligations(state, "2026-10-29");
+  const draftComparison = compareRegulatorFollowUpDrafts(state, "OBL-204-A");
+  const prepareFollowUp = () => { try { setState(repository.dispatch({ id: crypto.randomUUID(), expectedRevision: state.revision, role, obligationId: "OBL-204-A", requestedInformation: draft.requested, responseStatement: draft.statement, evidenceReferences: draft.evidence.split(",").map((item) => item.trim()).filter(Boolean), amendmentReason: draft.reason || null, owner: draft.owner, draftedBy: "Compliance analyst", draftedOn: "2026-10-26" })); setMessage("Obligation-specific response draft preserved for review."); } catch (error) { setMessage(error instanceof Error ? error.message : "Follow-up drafting failed."); } queueMicrotask(() => feedback.current?.focus()); };
   const reschedule = () => {
     try {
       setState(
@@ -172,7 +176,7 @@ export function RegulatorResponseControl() {
     }
     queueMicrotask(() => feedback.current?.focus());
   };
-  const advanceFollowUp = () => { const stages: RegulatoryFollowUpStage[] = ["opened", "drafted", "approved", "dispatched", "acknowledged", "closed"]; const history = state.followUpEvents.filter((item) => item.obligationId === "OBL-204-A"); const stage = stages[history.length]; if (!stage) return; try { setState(repository.dispatch({ id: crypto.randomUUID(), expectedRevision: state.revision, role, obligationId: "OBL-204-A", responseId: "REG-FCA-204", releaseReference: "RELEASE-204-R1", obligationType: "evidence-supplement", deadline: "2026-10-28", owner: "Regulatory liaison", stage, evidenceReference: `FOLLOWUP-${stage}`, actor: "Compliance lead", occurredOn: "2026-10-26" })); setMessage(`Regulator follow-up ${stage}.`); } catch (error) { setMessage(error instanceof Error ? error.message : "Follow-up update failed."); } queueMicrotask(() => feedback.current?.focus()); };
+  const advanceFollowUp = () => { const stages: RegulatoryFollowUpStage[] = ["opened", "drafted", "approved", "dispatched", "acknowledged", "closed"]; const history = state.followUpEvents.filter((item) => item.obligationId === "OBL-204-A"); const stage = stages[history.length]; if (!stage) return; try { setState(repository.dispatch({ id: crypto.randomUUID(), expectedRevision: state.revision, role, obligationId: "OBL-204-A", responseId: "REG-FCA-204", releaseReference: "RELEASE-204-R1", obligationType: "evidence-supplement", deadline: "2026-10-28", owner: "Regulatory liaison", stage, evidenceReference: stage === "approved" && draftComparison ? draftComparison.current.id : `FOLLOWUP-${stage}`, actor: "Compliance lead", occurredOn: "2026-10-26" })); setMessage(`Regulator follow-up ${stage}.`); } catch (error) { setMessage(error instanceof Error ? error.message : "Follow-up update failed."); } queueMicrotask(() => feedback.current?.focus()); };
   return (
     <section className="card" aria-label="Regulator response readiness">
       <h2>Regulator response readiness</h2>
@@ -245,6 +249,8 @@ export function RegulatorResponseControl() {
         Acknowledge and close response
       </button>
       <button disabled={role !== "Compliance Lead" || state.closures.length === 0 || state.followUpEvents.filter((item) => item.obligationId === "OBL-204-A").length >= 6} onClick={advanceFollowUp}>Advance regulator follow-up</button>
+      <fieldset><legend>Obligation response draft</legend><label>Requested regulator information<input value={draft.requested} onChange={(event) => { setDraft({ ...draft, requested: event.target.value }); }} /></label><label>Response statement<textarea value={draft.statement} onChange={(event) => { setDraft({ ...draft, statement: event.target.value }); }} /></label><label>Evidence references<input value={draft.evidence} onChange={(event) => { setDraft({ ...draft, evidence: event.target.value }); }} /></label><label>Amendment reason<input value={draft.reason} onChange={(event) => { setDraft({ ...draft, reason: event.target.value }); }} /></label><label>Response owner<input value={draft.owner} onChange={(event) => { setDraft({ ...draft, owner: event.target.value }); }} /></label><button disabled={followUps.length === 0 || followUps[0]?.status === "closed"} onClick={prepareFollowUp}>Save obligation draft</button></fieldset>
+      {draftComparison && <section aria-label="Follow-up amendment comparison"><h3>Follow-up response versions</h3><p>Source release {draftComparison.current.sourceReleaseReference} · previous {draftComparison.previous?.id ?? "none"} · current {draftComparison.current.id}</p><p>Statement {draftComparison.previous?.responseStatement ?? "original notification"} → {draftComparison.current.responseStatement}</p><p>Added evidence {draftComparison.addedEvidence.join(", ") || "none"} · removed evidence {draftComparison.removedEvidence.join(", ") || "none"} · reason {draftComparison.amendmentReason ?? "initial draft"}</p></section>}
       {message && (
         <p ref={feedback} tabIndex={-1} role="status">
           {message}

@@ -6,8 +6,9 @@ export interface RegulatoryClosure { id: string; responseId: string; reviewChang
 export interface ResponseDispatchAttempt { id: string; responseId: string; releaseReference: string; releaseRevision: number; attemptNumber: number; status: 'failed' | 'succeeded'; failureClassification: string | null; retryEligible: boolean; actor: string; attemptedOn: string; retryOf: string | null; dispatchEvidence: string | null; immutable: true }
 export type RegulatoryFollowUpStage = 'opened' | 'drafted' | 'approved' | 'dispatched' | 'acknowledged' | 'closed'
 export interface RegulatoryFollowUpEvent { id: string; obligationId: string; responseId: string; releaseReference: string; obligationType: 'information-request' | 'remediation-update' | 'evidence-supplement'; deadline: string; owner: string; stage: RegulatoryFollowUpStage; evidenceReference: string; actor: string; occurredOn: string; sourceRevision: number; immutable: true }
-export interface RegulatorResponseState { revision: number; responses: RegulatorResponseRecord[]; reviewHistory: LegalReviewChange[]; dispatchAttempts: ResponseDispatchAttempt[]; followUpEvents: RegulatoryFollowUpEvent[]; closures: RegulatoryClosure[] }
-export const initialRegulatorResponseState: RegulatorResponseState = { revision: 0, responses: structuredClone(seededRegulatorResponses), reviewHistory: [], dispatchAttempts: [], followUpEvents: [], closures: [] }
+export interface FollowUpResponseDraft { id: string; obligationId: string; sourceReleaseReference: string; previousDraftId: string | null; requestedInformation: string; responseStatement: string; evidenceReferences: string[]; amendmentReason: string | null; owner: string; draftedBy: string; draftedOn: string; sourceRevision: number; immutable: true }
+export interface RegulatorResponseState { revision: number; responses: RegulatorResponseRecord[]; reviewHistory: LegalReviewChange[]; dispatchAttempts: ResponseDispatchAttempt[]; followUpEvents: RegulatoryFollowUpEvent[]; followUpDrafts: FollowUpResponseDraft[]; closures: RegulatoryClosure[] }
+export const initialRegulatorResponseState: RegulatorResponseState = { revision: 0, responses: structuredClone(seededRegulatorResponses), reviewHistory: [], dispatchAttempts: [], followUpEvents: [], followUpDrafts: [], closures: [] }
 export const dispatchRetryPolicy = { maximumAttemptsPerRelease: 3 } as const
 interface RescheduleLegalReview { id: string; expectedRevision: number; role: RegulatorControlRole; responseId: string; reviewer: string; reviewOn: string; asOf: string; reason: string }
 
@@ -86,11 +87,29 @@ export function recordRegulatoryFollowUp(state: RegulatorResponseState, command:
   const previous = history.at(-1)
   if ((history.length === 0 && command.stage !== 'opened') || (previous && order.indexOf(command.stage) !== order.indexOf(previous.stage) + 1)) throw new Error('Regulator follow-up stages must preserve approval, dispatch, acknowledgement, and closure order.')
   if (!command.deadline || !command.owner || !command.evidenceReference.trim()) throw new Error('Follow-up deadline, owner, and stage evidence are required.')
+  if (command.stage === 'approved' && state.followUpDrafts.some((item) => item.obligationId === command.obligationId) && command.evidenceReference !== state.followUpDrafts.filter((item) => item.obligationId === command.obligationId).at(-1)?.id) throw new Error('Legal approval must reference the latest obligation-specific draft.')
   const next = structuredClone(state)
   next.followUpEvents.push({ ...command, evidenceReference: command.evidenceReference.trim(), sourceRevision: state.revision, immutable: true })
   next.revision += 1
   return next
 }
+
+export function draftRegulatoryFollowUp(state: RegulatorResponseState, command: { id: string; expectedRevision: number; role: RegulatorControlRole; obligationId: string; requestedInformation: string; responseStatement: string; evidenceReferences: string[]; amendmentReason: string | null; owner: string; draftedBy: string; draftedOn: string }) {
+  if (state.followUpDrafts.some((item) => item.id === command.id)) return state
+  if (state.revision !== command.expectedRevision) throw new Error('Regulator response changed. Refresh before drafting the follow-up.')
+  if (!(new Set<string>(['Compliance Analyst', 'Compliance Lead'])).has(command.role)) throw new Error('Only compliance staff can draft regulator follow-up responses.')
+  const history = state.followUpEvents.filter((item) => item.obligationId === command.obligationId)
+  const obligation = history.at(-1)
+  if (!obligation || !['opened', 'drafted'].includes(obligation.stage)) throw new Error('An open regulator follow-up obligation is required for drafting.')
+  const previous = state.followUpDrafts.filter((item) => item.obligationId === command.obligationId).at(-1) ?? null
+  if (command.requestedInformation.trim().length < 10 || command.responseStatement.trim().length < 20 || command.evidenceReferences.length === 0 || !command.owner.trim() || (previous && (command.amendmentReason?.trim().length ?? 0) < 15)) throw new Error('Response statement, requested information, evidence, owner, and amendment reason are required.')
+  const next = structuredClone(state)
+  next.followUpDrafts.push({ id: command.id, obligationId: command.obligationId, sourceReleaseReference: obligation.releaseReference, previousDraftId: previous?.id ?? null, requestedInformation: command.requestedInformation.trim(), responseStatement: command.responseStatement.trim(), evidenceReferences: [...command.evidenceReferences], amendmentReason: command.amendmentReason?.trim() ?? null, owner: command.owner.trim(), draftedBy: command.draftedBy, draftedOn: command.draftedOn, sourceRevision: state.revision, immutable: true })
+  next.revision += 1
+  return next
+}
+
+export function compareRegulatorFollowUpDrafts(state: RegulatorResponseState, obligationId: string) { const drafts = state.followUpDrafts.filter((item) => item.obligationId === obligationId); const current = drafts.at(-1); if (!current) return null; const previous = drafts.find((item) => item.id === current.previousDraftId) ?? null; return { previous, current, changedStatement: previous ? previous.responseStatement !== current.responseStatement : null, addedEvidence: current.evidenceReferences.filter((item) => !previous?.evidenceReferences.includes(item)), removedEvidence: previous?.evidenceReferences.filter((item) => !current.evidenceReferences.includes(item)) ?? [], amendmentReason: current.amendmentReason } }
 
 export function getRegulatoryFollowUpObligations(state: RegulatorResponseState, asOf: string) {
   const ids = [...new Set(state.followUpEvents.map((item) => item.obligationId))]
@@ -132,12 +151,12 @@ export class BrowserRegulatorResponsePersistence implements RegulatorResponsePer
   static key = 'sentinelarc:regulator-response-control:v2'
   private readonly storage: Pick<Storage, 'getItem' | 'setItem'>
   constructor(storage: Pick<Storage, 'getItem' | 'setItem'>) { this.storage = storage }
-  load() { const raw = this.storage.getItem(BrowserRegulatorResponsePersistence.key); if (!raw) return null; const saved = JSON.parse(raw) as Partial<RegulatorResponseState>; return { ...(saved as RegulatorResponseState), reviewHistory: saved.reviewHistory ?? [], dispatchAttempts: saved.dispatchAttempts ?? [], followUpEvents: saved.followUpEvents ?? [], closures: saved.closures ?? [] } }
+  load() { const raw = this.storage.getItem(BrowserRegulatorResponsePersistence.key); if (!raw) return null; const saved = JSON.parse(raw) as Partial<RegulatorResponseState>; return { ...(saved as RegulatorResponseState), reviewHistory: saved.reviewHistory ?? [], dispatchAttempts: saved.dispatchAttempts ?? [], followUpEvents: saved.followUpEvents ?? [], followUpDrafts: saved.followUpDrafts ?? [], closures: saved.closures ?? [] } }
   save(state: RegulatorResponseState) { this.storage.setItem(BrowserRegulatorResponsePersistence.key, JSON.stringify(state)) }
 }
 export class RegulatorResponseRepository {
   private readonly persistence: RegulatorResponsePersistence
   constructor(persistence: RegulatorResponsePersistence | Pick<Storage, 'getItem' | 'setItem'>) { this.persistence = 'load' in persistence ? persistence : new BrowserRegulatorResponsePersistence(persistence) }
   read(): RegulatorResponseState { return this.persistence.load() ?? structuredClone(initialRegulatorResponseState) }
-  dispatch(command: RescheduleLegalReview | RecordResponseDispatch | CloseRegulatoryObligation | RecordRegulatoryFollowUp) { const current = this.read(); const next = 'obligationId' in command ? recordRegulatoryFollowUp(current, command) : 'regulatorAcknowledgement' in command ? closeRegulatoryObligation(current, command) : 'releaseRevision' in command ? recordResponseDispatchAttempt(current, command) : rescheduleLegalReview(current, command); if (next !== current) this.persistence.save(next); return next }
+  dispatch(command: RescheduleLegalReview | RecordResponseDispatch | CloseRegulatoryObligation | RecordRegulatoryFollowUp | Parameters<typeof draftRegulatoryFollowUp>[1]) { const current = this.read(); const next = 'responseStatement' in command ? draftRegulatoryFollowUp(current, command) : 'obligationId' in command ? recordRegulatoryFollowUp(current, command) : 'regulatorAcknowledgement' in command ? closeRegulatoryObligation(current, command) : 'releaseRevision' in command ? recordResponseDispatchAttempt(current, command) : rescheduleLegalReview(current, command); if (next !== current) this.persistence.save(next); return next }
 }
