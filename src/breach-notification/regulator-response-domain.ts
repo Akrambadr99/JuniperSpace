@@ -133,6 +133,18 @@ export function reviewRegulatoryFollowUpDraft(state: RegulatorResponseState, com
 
 export function compareRegulatorFollowUpDrafts(state: RegulatorResponseState, obligationId: string) { const drafts = state.followUpDrafts.filter((item) => item.obligationId === obligationId); const current = drafts.at(-1); if (!current) return null; const previous = drafts.find((item) => item.id === current.previousDraftId) ?? null; return { previous, current, changedStatement: previous ? previous.responseStatement !== current.responseStatement : null, addedEvidence: current.evidenceReferences.filter((item) => !previous?.evidenceReferences.includes(item)), removedEvidence: previous?.evidenceReferences.filter((item) => !current.evidenceReferences.includes(item)) ?? [], amendmentReason: current.amendmentReason } }
 
+export function getRegulatoryFollowUpReviewReadiness(state: RegulatorResponseState, obligationId: string) {
+  const draft = state.followUpDrafts.filter((item) => item.obligationId === obligationId).at(-1)
+  if (!draft) return null
+  const obligation = state.followUpEvents.filter((item) => item.obligationId === obligationId).at(-1) ?? null
+  const sourceRelease = state.closures.find((item) => item.releaseReference === draft.sourceReleaseReference && item.responseId === obligation?.responseId) ?? null
+  const review = state.followUpReviews.find((item) => item.draftId === draft.id) ?? null
+  const blockers = [...(!sourceRelease ? ['Acknowledged source release unavailable'] : []), ...(draft.evidenceReferences.length === 0 ? ['Selected evidence missing'] : []), ...(review?.decision === 'returned' ? ['Current draft returned for correction'] : !review ? ['Current draft requires independent review'] : []), ...(obligation?.stage !== 'approved' && obligation?.stage !== 'dispatched' && obligation?.stage !== 'acknowledged' && obligation?.stage !== 'closed' ? ['Follow-up approval stage pending'] : [])]
+  const dispatchReady = blockers.length === 0 && obligation?.stage === 'approved'
+  const dispatchStatus = obligation?.stage === 'dispatched' || obligation?.stage === 'acknowledged' || obligation?.stage === 'closed' ? `follow-up ${obligation.stage}` : dispatchReady ? 'approved for dispatch' : blockers.join('; ')
+  return { draft, obligation, sourceRelease, review, blockers, dispatchReady, dispatchStatus }
+}
+
 export function getRegulatoryFollowUpObligations(state: RegulatorResponseState, asOf: string) {
   const ids = [...new Set(state.followUpEvents.map((item) => item.obligationId))]
   return ids.map((obligationId) => {

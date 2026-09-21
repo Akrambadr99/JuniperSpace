@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { closeRegulatoryObligation, compareRegulatorFollowUpDrafts, draftRegulatoryFollowUp, getDispatchRecoveryStatus, getRegulatoryFollowUpObligations, initialRegulatorResponseState, queryResponseEvidenceTimeline, recordRegulatoryFollowUp, recordResponseDispatchAttempt, rescheduleLegalReview, reviewRegulatoryFollowUpDraft, type RegulatoryFollowUpStage } from './regulator-response-domain'
+import { closeRegulatoryObligation, compareRegulatorFollowUpDrafts, draftRegulatoryFollowUp, getDispatchRecoveryStatus, getRegulatoryFollowUpObligations, getRegulatoryFollowUpReviewReadiness, initialRegulatorResponseState, queryResponseEvidenceTimeline, recordRegulatoryFollowUp, recordResponseDispatchAttempt, rescheduleLegalReview, reviewRegulatoryFollowUpDraft, type RegulatoryFollowUpStage } from './regulator-response-domain'
 
 const command = { id: 'review-1', expectedRevision: 0, role: 'Compliance Lead' as const, responseId: 'REG-FCA-204', reviewer: 'Senior privacy counsel', reviewOn: '2026-10-20T18:00:00Z', asOf: '2026-10-20T09:00:00Z', reason: 'Evidence blocker requires senior counsel review before deadline.' }
 describe('regulator legal-review control', () => {
@@ -23,12 +23,15 @@ describe('post-acknowledgement regulator follow-up', () => {
     expect(() => reviewRegulatoryFollowUpDraft(first, { ...review, role: 'Compliance Analyst' })).toThrow('compliance lead')
     const returned = reviewRegulatoryFollowUpDraft(first, review)
     expect(returned.followUpReviews[0]).toMatchObject({ draftId: draft.id, decision: 'returned', immutable: true })
+    expect(getRegulatoryFollowUpReviewReadiness(returned, 'OBL-REVIEW')?.sourceRelease).toMatchObject({ legalApproval: 'LEGAL-204', complianceApproval: 'COMP-204' })
+    expect(getRegulatoryFollowUpReviewReadiness(returned, 'OBL-REVIEW')?.blockers).toContain('Current draft returned for correction')
     const amended = draftRegulatoryFollowUp(returned, { ...draft, id: 'review-draft-2', expectedRevision: returned.revision, amendmentReason: 'Corrected the dated chain of custody.', responseStatement: 'The sealed device was transferred under documented custody.' })
     const approved = reviewRegulatoryFollowUpDraft(amended, { ...review, id: 'review-approve', expectedRevision: amended.revision, draftId: 'review-draft-2', decision: 'approved', rationale: 'Corrected custody date and evidence reviewed.' })
     const drafted = recordRegulatoryFollowUp(approved, { ...event, id: 'stage-drafted-review', expectedRevision: approved.revision, stage: 'drafted', evidenceReference: 'review-draft-2' })
     expect(() => recordRegulatoryFollowUp(amended, { ...event, id: 'stage-drafted-review', expectedRevision: amended.revision, stage: 'approved', evidenceReference: 'review-draft-2' })).toThrow('must preserve')
     const released = recordRegulatoryFollowUp(drafted, { ...event, id: 'stage-approved-review', expectedRevision: drafted.revision, stage: 'approved', evidenceReference: 'review-draft-2' })
     expect(released.followUpEvents.at(-1)).toMatchObject({ stage: 'approved', evidenceReference: 'review-draft-2' })
+    expect(getRegulatoryFollowUpReviewReadiness(released, 'OBL-REVIEW')).toMatchObject({ blockers: [], dispatchReady: true })
     expect(released.followUpReviews).toHaveLength(2)
     expect(opened.followUpReviews).toHaveLength(0)
   })
