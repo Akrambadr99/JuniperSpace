@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { acknowledgeCorrectionEscalation, BrowserRegulatorResponsePersistence, closeRegulatoryObligation, compareRegulatorFollowUpDrafts, correctionAssignment, draftRegulatoryFollowUp, escalateCorrectionDeadline, getDispatchRecoveryStatus, getRegulatoryFollowUpObligations, getRegulatoryFollowUpReviewReadiness, initialRegulatorResponseState, queryResponseEvidenceTimeline, recordRegulatoryFollowUp, recordResponseDispatchAttempt, recordCorrectionAuthorityFollowUp, recoverUnacknowledgedCorrectionHandoff, rescheduleLegalReview, reviewRegulatoryFollowUpDraft, type RegulatoryFollowUpStage } from './regulator-response-domain'
+import { acknowledgeCorrectionEscalation, BrowserRegulatorResponsePersistence, closeRegulatoryObligation, compareRegulatorFollowUpDrafts, correctionAssignment, draftRegulatoryFollowUp, escalateCorrectionDeadline, getDispatchRecoveryStatus, getRegulatoryFollowUpObligations, getRegulatoryFollowUpReviewReadiness, initialRegulatorResponseState, queryResponseEvidenceTimeline, recordRegulatoryFollowUp, recordResponseDispatchAttempt, recordCorrectionAuthorityFollowUp, recoverUnacknowledgedCorrectionHandoff, rescheduleLegalReview, reviseCorrectionAuthorityPolicy, reviewRegulatoryFollowUpDraft, type RegulatoryFollowUpStage } from './regulator-response-domain'
 
 it('recovers an overdue unacknowledged correction handoff without transferring ownership prematurely', () => {
   const base = structuredClone(initialRegulatorResponseState)
@@ -90,4 +90,26 @@ it('keeps correction ownership with the original analyst through overdue higher-
   expect(correctionAssignment(accepted,'correction-authority')).toMatchObject({owner:'Duty manager',pendingOwner:null})
   expect(accepted.authorityFollowUps).toEqual(followed.authorityFollowUps)
   expect(new BrowserRegulatorResponsePersistence({getItem:()=>JSON.stringify({...alternate,authorityFollowUps:undefined}),setItem:()=>undefined}).load()?.authorityFollowUps).toEqual([])
+})
+
+it('pins the authority schedule to a returned correction despite later policy revisions', () => {
+  const base = structuredClone(initialRegulatorResponseState)
+  base.closures.push({ id: 'closure-policy', responseId: 'REG-FCA-204', reviewChangeId: 'review-policy', evidenceIds: ['EVD-DEVICE-7'], legalApproval: 'LEGAL', complianceApproval: 'COMP', releaseReference: 'REL-204', dispatchEvidence: 'DISPATCH', regulatorAcknowledgement: 'ACK', outstandingFollowUps: 0, closedBy: 'lead', closedOn: '2026-10-20', immutable: true })
+  const policy = { id: 'policy-2', expectedRevision: base.revision, role: 'Compliance Lead' as const, obligationType: 'evidence-supplement' as const, effectiveOn: '2026-10-25', primaryAuthority: 'Senior compliance lead', nextAuthority: 'Duty compliance lead', acknowledgementDays: 1, approvedBy: 'Compliance lead' }
+  expect(() => reviseCorrectionAuthorityPolicy(base, { ...policy, role: 'Compliance Analyst' })).toThrow('compliance lead')
+  let state = reviseCorrectionAuthorityPolicy(base, policy)
+  state = recordRegulatoryFollowUp(state, { id: 'open-policy', expectedRevision: state.revision, role: 'Compliance Lead', obligationId: 'OBL-204-A', responseId: 'REG-FCA-204', releaseReference: 'REL-204', obligationType: 'evidence-supplement', deadline: '2026-10-28', owner: 'Regulatory liaison', stage: 'opened', evidenceReference: 'REQ', actor: 'lead', occurredOn: '2026-10-25' })
+  state = draftRegulatoryFollowUp(state, { id: 'draft-policy', expectedRevision: state.revision, role: 'Compliance Analyst', obligationId: 'OBL-204-A', requestedInformation: 'Confirm sealed device custody', responseStatement: 'The device remained in controlled custody.', evidenceReferences: ['EVD-DEVICE-7'], amendmentReason: null, owner: 'Regulatory liaison', draftedBy: 'analyst', draftedOn: '2026-10-26' })
+  state = reviewRegulatoryFollowUpDraft(state, { id: 'return-policy', expectedRevision: state.revision, role: 'Compliance Lead', obligationId: 'OBL-204-A', draftId: 'draft-policy', decision: 'returned', rationale: 'Custody dates require the sealed transfer record.', reviewer: 'lead', reviewedOn: '2026-10-26' })
+  expect(state.correctionRequests[0]).toMatchObject({ authorityPolicyId: 'policy-2', immutable: true })
+  const beforeRevision = state
+  state = reviseCorrectionAuthorityPolicy(state, { ...policy, id: 'policy-3', expectedRevision: state.revision, primaryAuthority: 'New compliance director', nextAuthority: 'New duty director', acknowledgementDays: 2, effectiveOn: '2026-10-27' })
+  const command = { id: 'schedule-policy', expectedRevision: state.revision, role: 'Compliance Lead' as const, correctionRequestId: 'return-policy:correction', owner: 'Senior liaison', dueOn: '2026-10-31', acknowledgementDueOn: '2026-10-30', higherAuthority: 'Senior compliance lead', reason: 'Correction remains incomplete after the original regulator deadline.', evidenceReference: 'ESC-POLICY', escalatedBy: 'lead', escalatedOn: '2026-10-29' }
+  expect(() => escalateCorrectionDeadline(state, { ...command, higherAuthority: 'New compliance director' })).toThrow('pinned authority policy')
+  expect(() => escalateCorrectionDeadline(state, { ...command, acknowledgementDueOn: '2026-10-31' })).toThrow('pinned authority policy')
+  const escalated = escalateCorrectionDeadline(state, command)
+  expect(escalated.correctionSchedule[0]).toMatchObject({ policyRevisionId: 'policy-2', higherAuthority: 'Senior compliance lead', acknowledgementDueOn: '2026-10-30' })
+  expect(escalated.correctionRequests).toEqual(beforeRevision.correctionRequests)
+  expect(escalated.authorityPolicies.map((item) => item.id)).toContain('policy-3')
+  expect(new BrowserRegulatorResponsePersistence({ getItem: () => JSON.stringify({ ...beforeRevision, authorityPolicies: undefined }), setItem: () => undefined }).load()?.authorityPolicies).toHaveLength(3)
 })
