@@ -7,6 +7,7 @@ import {
   getDispatchRecoveryStatus,
   getRegulatoryFollowUpReviewReadiness,
   getRegulatoryFollowUpObligations,
+  regulatoryCaseIntegrity,
   RegulatorResponseRepository,
   type RegulatorControlRole,
   type RegulatoryFollowUpStage,
@@ -19,6 +20,8 @@ export function RegulatorResponseControl() {
   const [state, setState] = useState(() => repository.read());
   const [role, setRole] = useState<RegulatorControlRole>("Compliance Analyst");
   const [message, setMessage] = useState("");
+  const [archiveCaseId, setArchiveCaseId] = useState('REG-FCA-204');
+  const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null);
   const [draft, setDraft] = useState({ requested: "Provide current sealed device evidence", statement: "The corrected device evidence confirms the containment sequence.", evidence: "EVD-DEVICE-7", reason: "", owner: "Regulatory liaison" });
   const [reviewRationale, setReviewRationale] = useState("Evidence matches the acknowledged release and obligation request.");
   const [replacementOwner, setReplacementOwner] = useState("Senior regulatory liaison");
@@ -29,6 +32,9 @@ export function RegulatorResponseControl() {
   const [escalationReason, setEscalationReason] = useState("Original correction deadline passed without the required custody evidence.");
   const feedback = useRef<HTMLParagraphElement>(null);
   const readiness = regulatorResponseReadiness(state.responses, "2026-10-20");
+  const archiveIssues = regulatoryCaseIntegrity(state, archiveCaseId);
+  const selectedArchive = state.caseArchives.find((item) => item.id === selectedArchiveId) ?? state.caseArchives.at(-1);
+  const captureArchive = () => { try { const id = crypto.randomUUID(); setState(repository.captureArchive({ id, expectedRevision: state.revision, responseId: archiveCaseId, role, createdBy: 'Compliance lead', createdOn: '2026-10-29' })); setSelectedArchiveId(id); setMessage('Regulatory case archive captured with verified release and correction lineage.'); } catch (error) { setMessage(error instanceof Error ? error.message : 'Case archive failed.'); } queueMicrotask(() => feedback.current?.focus()); };
   const recovery = getDispatchRecoveryStatus(
     state,
     "REG-FCA-204",
@@ -220,6 +226,7 @@ export function RegulatorResponseControl() {
           {item.blockers.join(", ") || "clear"}
         </p>
       ))}
+      <section aria-label="Regulatory case evidence archive"><h3>Case evidence archive</h3><label>Regulatory case<select value={archiveCaseId} onChange={(event) => { setArchiveCaseId(event.target.value); }}>{state.responses.map((item) => <option key={item.responseId} value={item.responseId}>{item.responseId}</option>)}</select></label><p aria-label="Regulatory archive integrity">{archiveIssues.length ? archiveIssues.join(' ') : 'Release, dispatch, follow-up, and correction lineage verified.'}</p><button disabled={role !== 'Compliance Lead' || archiveIssues.length > 0} onClick={captureArchive}>Capture regulatory case archive</button><ol aria-label="Regulatory case archive history">{state.caseArchives.map((item) => <li key={item.id}><button aria-pressed={selectedArchive?.id === item.id} onClick={() => { setSelectedArchiveId(item.id); }}>{item.responseId} · {item.createdOn} · revision {item.sourceRevision}</button></li>)}</ol>{selectedArchive && <div aria-label="Selected regulatory case archive"><p>Archive {selectedArchive.id} · schema {selectedArchive.schemaVersion} · case {selectedArchive.responseId} · source revision {selectedArchive.sourceRevision}</p><p>{selectedArchive.closures.length} acknowledged releases · {selectedArchive.dispatchAttempts.length} dispatch attempts · {selectedArchive.followUpEvents.length} follow-up events · {selectedArchive.correctionRequests.length} correction requests</p><a download={`regulatory-case-${selectedArchive.id}.json`} href={`data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(selectedArchive, null, 2))}`}>Download selected case archive</a></div>}</section>
       <button
         disabled={role !== "Compliance Lead" || state.reviewHistory.length > 0}
         onClick={reschedule}
