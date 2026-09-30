@@ -1,3 +1,6 @@
+import { product } from '../product/definition';
+import { Repository as IncidentRepository } from '../workspace/repository';
+import { readRegulatoryIncidentEvidence, requireCurrentRegulatoryEvidence } from './incident-evidence-source';
 import { useEffect, useRef, useState } from "react";
 import { regulatorResponseReadiness } from "./regulator-readiness";
 import {
@@ -14,7 +17,7 @@ import {
   type RegulatoryFollowUpEvent,
 } from "./regulator-response-domain";
 
-interface CaseInput { reviewer: string; reviewOn: string; evidence: string; amendment: string; reason: string; legalRationale: string; release: string; dispatch: string; acknowledgement: string }
+interface CaseInput { incidentId?: string; incidentEvidenceId?: string; associationReason?: string; reviewer: string; reviewOn: string; evidence: string; amendment: string; reason: string; legalRationale: string; release: string; dispatch: string; acknowledgement: string }
 interface ObligationInput { draft: { requested: string; statement: string; evidence: string; reason: string; owner: string }; rationale: string; stageEvidence: string }
 function readObligationInputs(): Record<string, ObligationInput> {
   try {
@@ -32,8 +35,12 @@ function readRequestInputs(): Record<string, RequestInput> {
   } catch { return {}; }
 }
 export function RegulatorResponseControl() {
+  const [incidents] = useState(() => new IncidentRepository(product, localStorage));
+  const readIncidentSource = () => { try { return { snapshot: incidents.read(), error: '' }; } catch { return { snapshot: undefined, error: 'Incident workspace unavailable. Restore valid workspace data and refresh incident sources.' }; } };
+  const [incidentRead, setIncidentRead] = useState(readIncidentSource);
+  const incidentSnapshot = incidentRead.snapshot;
   const [repository] = useState(
-    () => new RegulatorResponseRepository(localStorage),
+    () => new RegulatorResponseRepository(localStorage, () => incidents.read()),
   );
   const [state, setState] = useState(() => repository.read());
   const [role, setRole] = useState<RegulatorControlRole>("Compliance Analyst");
@@ -61,11 +68,15 @@ export function RegulatorResponseControl() {
   const governedRelease = !legacyRelease || Boolean(currentCasePreparation);
   const legalReleaseReady = !governedRelease || (currentCaseLegalReview?.decision === 'approved' && currentCaseLegalReview.preparationId === currentCasePreparation?.id && currentCaseLegalReview.reviewChangeId === currentLegalReviewSchedule?.id);
   const caseBusinessTime = (fallback: string) => [fallback, ...state.casePreparations.filter((item) => item.responseId === releaseCaseId).map((item) => item.preparedOn), ...state.caseLegalReviews.filter((item) => item.responseId === releaseCaseId).map((item) => item.reviewedOn), ...state.dispatchAttempts.filter((item) => item.responseId === releaseCaseId).map((item) => item.attemptedOn)].sort().at(-1) ?? fallback;
+  const sourceStatus = incidentRead.error || (() => { try { requireCurrentRegulatoryEvidence(currentCasePreparation?.incidentEvidence, incidentSnapshot); return currentCasePreparation?.incidentEvidence ? 'Incident evidence matches the reviewed source revisions.' : 'External evidence references retained; no incident relationship has been inferred.'; } catch (error) { return error instanceof Error ? error.message : 'Incident source is unavailable.'; } })();
+  const refreshIncidentSource = () => { const refreshed = readIncidentSource(); setIncidentRead(refreshed); setMessage(refreshed.error || 'Incident sources refreshed; case input and previous review evidence preserved.'); queueMicrotask(() => feedback.current?.focus()); };
   const prepareCase = () => {
     try {
-      setState(repository.dispatch({ id: crypto.randomUUID(), expectedRevision: state.revision, role, responseId: releaseCaseId, casePreparation: true, evidenceIds: caseInput.evidence.split(',').map((item) => item.trim()).filter(Boolean), amendmentEvidence: caseInput.amendment || null, reason: caseInput.reason, preparedBy: role, preparedOn: caseBusinessTime('2026-10-20T18:00:00Z') }));
+      const incidentEvidence = caseInput.incidentId || caseInput.incidentEvidenceId ? readRegulatoryIncidentEvidence(incidentSnapshot, caseInput.incidentId ?? '', caseInput.incidentEvidenceId ?? '', caseInput.associationReason ?? '') : undefined;
+      setState(repository.dispatch({ ...(incidentEvidence ? { incidentEvidence } : {}), id: crypto.randomUUID(), expectedRevision: state.revision, role, responseId: releaseCaseId, casePreparation: true, evidenceIds: caseInput.evidence.split(',').map((item) => item.trim()).filter(Boolean), amendmentEvidence: caseInput.amendment || null, reason: caseInput.reason, preparedBy: role, preparedOn: caseBusinessTime('2026-10-20T18:00:00Z') }));
       setMessage('Case-specific source evidence prepared; independent legal release review is required.');
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Case preparation failed.'); }
+    queueMicrotask(() => feedback.current?.focus());
   };
   const reviewCase = (decision: 'approved' | 'returned') => {
     if (!currentCasePreparation) return;
@@ -73,6 +84,7 @@ export function RegulatorResponseControl() {
       setState(repository.dispatch({ id: crypto.randomUUID(), expectedRevision: state.revision, role, responseId: releaseCaseId, caseLegalReview: true, preparationId: currentCasePreparation.id, decision, rationale: caseInput.legalRationale, reviewer: currentLegalReviewSchedule?.reviewer ?? '', reviewedOn: caseBusinessTime(currentLegalReviewSchedule?.reviewOn ?? '2026-10-20T18:00:00Z') }));
       setMessage(decision === 'approved' ? 'Current case source evidence independently approved for release.' : 'Current case source evidence returned; correction must preserve the prior legal decision.');
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Case legal review failed.'); }
+    queueMicrotask(() => feedback.current?.focus());
   };
   const [archiveCaseId, setArchiveCaseId] = useState('REG-FCA-204');
   const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null);
@@ -297,6 +309,14 @@ export function RegulatorResponseControl() {
         <label>Legal review owner<input value={caseInput.reviewer} onChange={(event) => { updateCaseInput('reviewer', event.target.value); }} /></label>
         <label>Legal review business timestamp<input value={caseInput.reviewOn} onChange={(event) => { updateCaseInput('reviewOn', event.target.value); }} /></label>
         <label>Case source evidence<input value={caseInput.evidence} onChange={(event) => { updateCaseInput('evidence', event.target.value); }} /></label>
+        <details><summary>Authoritative incident evidence</summary>
+          <p>Select only an incident actually associated with this case. External evidence references remain separate.</p>
+          <label>Source incident<select value={caseInput.incidentId ?? ''} onChange={(event) => { updateCaseInput('incidentId', event.target.value); }}><option value="">External evidence only</option>{(incidentSnapshot?.entities ?? []).filter(item => item.kind === 'incident').map(item => <option key={item.id} value={item.id}>{item.id} · {item.title}</option>)}</select></label>
+          <label>Source incident evidence<select value={caseInput.incidentEvidenceId ?? ''} onChange={(event) => { updateCaseInput('incidentEvidenceId', event.target.value); }}><option value="">Select evidence</option>{(incidentSnapshot?.entities ?? []).filter(item => item.kind === 'evidence' && item.fields['incident'] === caseInput.incidentId).map(item => <option key={item.id} value={item.id}>{item.id} · {item.status} · revision {item.revision}</option>)}</select></label>
+          <label>Incident association reason<textarea value={caseInput.associationReason ?? ''} onChange={(event) => { updateCaseInput('associationReason', event.target.value); }} /></label>
+          <button onClick={refreshIncidentSource}>Refresh incident sources</button>
+          <p aria-label="Incident source readiness">{sourceStatus}</p>
+        </details>
         <label>Case amendment evidence<input value={caseInput.amendment} onChange={(event) => { updateCaseInput('amendment', event.target.value); }} /></label>
         <label>Case preparation reason<textarea value={caseInput.reason} onChange={(event) => { updateCaseInput('reason', event.target.value); }} /></label>
         <button disabled={role !== 'Compliance Analyst' || (selectedResponse?.released ?? true) || currentCaseAttempts.some((item) => item.status === 'succeeded')} onClick={prepareCase}>Prepare case release evidence</button>
@@ -306,7 +326,7 @@ export function RegulatorResponseControl() {
         <label>Case release reference<input value={caseInput.release} onChange={(event) => { updateCaseInput('release', event.target.value); }} /></label>
         <label>Case dispatch evidence<input value={caseInput.dispatch} onChange={(event) => { updateCaseInput('dispatch', event.target.value); }} /></label>
         <label>Case regulator acknowledgement<input value={caseInput.acknowledgement} onChange={(event) => { updateCaseInput('acknowledgement', event.target.value); }} /></label>
-        <ol aria-label="Case preparation history">{state.casePreparations.filter((item) => item.responseId === releaseCaseId).map((item) => <li key={item.id}>{item.id} · {item.evidenceIds.join(', ')} · amendment {item.amendmentEvidence ?? 'not required'} · {item.preparedBy} · {item.preparedOn}</li>)}</ol>
+        <ol aria-label="Case preparation history">{state.casePreparations.filter((item) => item.responseId === releaseCaseId).map((item) => <li key={item.id}>{item.id} · {item.evidenceIds.join(', ')} · amendment {item.amendmentEvidence ?? 'not required'} · {item.preparedBy} · {item.preparedOn}{item.incidentEvidence && <span> · incident {item.incidentEvidence.incidentId} r{item.incidentEvidence.incidentRevision} · evidence {item.incidentEvidence.evidenceId} r{item.incidentEvidence.evidenceRevision} · custodian {item.incidentEvidence.custodianId} · {item.incidentEvidence.digest} · receipt {item.incidentEvidence.acknowledgementId ?? 'initial seal'} · {item.incidentEvidence.associationReason}</span>}</li>)}</ol>
         <ol aria-label="Case legal release decisions">{state.caseLegalReviews.filter((item) => item.responseId === releaseCaseId).map((item) => <li key={item.id}>{item.preparationId} · {item.decision} · {item.reviewer} · {item.rationale}</li>)}</ol>
       </section>
 
