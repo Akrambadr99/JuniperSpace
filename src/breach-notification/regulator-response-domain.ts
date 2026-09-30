@@ -5,7 +5,7 @@ export interface LegalReviewChange { id: string; responseId: string; previousRev
 export interface RegulatoryClosure { id: string; responseId: string; reviewChangeId: string; evidenceIds: string[]; legalApproval: string; complianceApproval: string; releaseReference: string; dispatchEvidence: string; regulatorAcknowledgement: string; outstandingFollowUps: 0; closedBy: string; closedOn: string; immutable: true }
 export interface ResponseDispatchAttempt { id: string; responseId: string; releaseReference: string; releaseRevision: number; attemptNumber: number; status: 'failed' | 'succeeded'; failureClassification: string | null; retryEligible: boolean; actor: string; attemptedOn: string; retryOf: string | null; dispatchEvidence: string | null; immutable: true }
 export type RegulatoryFollowUpStage = 'opened' | 'drafted' | 'approved' | 'dispatched' | 'acknowledged' | 'closed'
-export interface RegulatoryFollowUpEvent { id: string; obligationId: string; responseId: string; releaseReference: string; obligationType: 'information-request' | 'remediation-update' | 'evidence-supplement'; deadline: string; owner: string; stage: RegulatoryFollowUpStage; evidenceReference: string; actor: string; occurredOn: string; sourceRevision: number; approvedDraftId?: string; approvedReviewId?: string; approvalEventId?: string; immutable: true }
+export interface RegulatoryFollowUpEvent { id: string; obligationId: string; responseId: string; releaseReference: string; obligationType: 'information-request' | 'remediation-update' | 'evidence-supplement'; deadline: string; owner: string; stage: RegulatoryFollowUpStage; evidenceReference: string; actor: string; occurredOn: string; sourceRevision: number; requiresReviewedDraft?: true; approvedDraftId?: string; approvedReviewId?: string; approvalEventId?: string; immutable: true }
 export interface FollowUpResponseDraft { id: string; obligationId: string; sourceReleaseReference: string; previousDraftId: string | null; correctionRequestId?: string; requestedInformation: string; responseStatement: string; evidenceReferences: string[]; amendmentReason: string | null; owner: string; draftedBy: string; draftedOn: string; sourceRevision: number; immutable: true }
 export interface FollowUpDraftReview { id: string; obligationId: string; draftId: string; sourceReleaseReference: string; decision: 'approved' | 'returned'; rationale: string; reviewer: string; reviewedOn: string; immutable: true }
 export interface CorrectionAuthorityPolicy { id: string; obligationType: RegulatoryFollowUpEvent['obligationType']; effectiveOn: string; approvedBy: string; primaryAuthority: string | null; nextAuthority: string | null; acknowledgementDays: number; immutable: true }
@@ -214,20 +214,26 @@ export function closeRegulatoryObligation(state: RegulatorResponseState, command
   return next
 }
 
-interface RecordRegulatoryFollowUp { id: string; expectedRevision: number; role: RegulatorControlRole; obligationId: string; responseId: string; releaseReference: string; obligationType: RegulatoryFollowUpEvent['obligationType']; deadline: string; owner: string; stage: RegulatoryFollowUpStage; evidenceReference: string; actor: string; occurredOn: string }
+interface RecordRegulatoryFollowUp { requiresReviewedDraft?: true; id: string; expectedRevision: number; role: RegulatorControlRole; obligationId: string; responseId: string; releaseReference: string; obligationType: RegulatoryFollowUpEvent['obligationType']; deadline: string; owner: string; stage: RegulatoryFollowUpStage; evidenceReference: string; actor: string; occurredOn: string }
 export function recordRegulatoryFollowUp(state: RegulatorResponseState, command: RecordRegulatoryFollowUp) {
   if (state.followUpEvents.some((item) => item.id === command.id)) return state
   if (state.revision !== command.expectedRevision) throw new Error('Regulator response changed. Refresh before recording follow-up work.')
   if (command.role !== 'Compliance Lead') throw new Error('Only the compliance lead can control regulator follow-up obligations.')
   const closure = state.closures.find((item) => item.responseId === command.responseId && item.releaseReference === command.releaseReference)
   if (!closure) throw new Error('Follow-up must reference the acknowledged immutable regulator release.')
+  if (command.stage === 'opened') {
+    const validDeadline = /^20\d{2}-\d{2}-\d{2}$/.test(command.deadline) && Number.isFinite(Date.parse(command.deadline)) && new Date(command.deadline).toISOString().slice(0, 10) === command.deadline
+    if (!command.obligationId.trim() || command.obligationId !== command.obligationId.trim() || !command.owner.trim() || !command.actor.trim() || !Number.isFinite(Date.parse(command.occurredOn)) || !validDeadline || command.deadline < command.occurredOn.slice(0, 10) || Date.parse(command.occurredOn) < Date.parse(closure.closedOn)) throw new Error('Opening an obligation requires a durable identity, named owner and actor, and a valid deadline after the acknowledged release.')
+  }
   const history = state.followUpEvents.filter((item) => item.obligationId === command.obligationId)
   const order: RegulatoryFollowUpStage[] = ['opened', 'drafted', 'approved', 'dispatched', 'acknowledged', 'closed']
+  const newGovernedRequest = command.stage === 'opened' && (command.responseId !== 'REG-FCA-204' || command.obligationId !== 'OBL-204-A')
   const previous = history.at(-1)
   const latestDraft = state.followUpDrafts.filter((item) => item.obligationId === command.obligationId).at(-1)
   const renewsApproval = previous?.stage === 'approved' && command.stage === 'approved' && latestDraft !== undefined && latestDraft.id !== previous.evidenceReference && command.evidenceReference === latestDraft.id
   if ((history.length === 0 && command.stage !== 'opened') || (previous && !renewsApproval && order.indexOf(command.stage) !== order.indexOf(previous.stage) + 1)) throw new Error('Regulator follow-up stages must preserve approval, dispatch, acknowledgement, and closure order.')
   const original = history[0]
+  if ((original?.requiresReviewedDraft || command.requiresReviewedDraft || newGovernedRequest) && ['approved', 'dispatched', 'acknowledged', 'closed'].includes(command.stage) && !latestDraft) throw new Error('Operator-created obligations require an independently reviewed response draft before approval or execution.')
   if (original && (original.responseId !== command.responseId || original.releaseReference !== command.releaseReference || original.obligationType !== command.obligationType || original.owner !== command.owner || original.deadline !== command.deadline)) throw new Error('Follow-up progression must preserve its original case, release, obligation type, owner and deadline.')
   if (previous && command.occurredOn < previous.occurredOn) throw new Error('Follow-up evidence cannot predate its preceding stage.')
   if (!command.deadline || !command.owner || !command.evidenceReference.trim()) throw new Error('Follow-up deadline, owner, and stage evidence are required.')
@@ -240,7 +246,7 @@ export function recordRegulatoryFollowUp(state: RegulatorResponseState, command:
   if (latestDraft && ['dispatched', 'acknowledged', 'closed'].includes(command.stage) && (approval?.evidenceReference !== latestDraft.id || !approvedReview || (approval.approvedReviewId && approval.approvedReviewId !== approvedReview.id))) throw new Error('Follow-up execution requires the exact independently approved draft and review lineage.')
   const pins = latestDraft && approvedReview && (command.stage === 'approved' || ['dispatched', 'acknowledged', 'closed'].includes(command.stage)) ? { approvedDraftId: latestDraft.id, approvedReviewId: approvedReview.id, ...(approval && command.stage !== 'approved' ? { approvalEventId: approval.id } : {}) } : {}
   const next = structuredClone(state)
-  next.followUpEvents.push({ ...command, ...pins, evidenceReference: command.evidenceReference.trim(), sourceRevision: state.revision, immutable: true })
+  next.followUpEvents.push({ ...command, ...(original?.requiresReviewedDraft || newGovernedRequest ? { requiresReviewedDraft: true as const } : {}), ...pins, evidenceReference: command.evidenceReference.trim(), sourceRevision: state.revision, immutable: true })
   next.revision += 1
   return next
 }

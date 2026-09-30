@@ -1,3 +1,7 @@
+import { createElement } from 'react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { RegulatorResponseControl } from './RegulatorResponseControl'
 import { describe, expect, it } from 'vitest'
 import { acknowledgeCorrectionEscalation, BrowserRegulatorResponsePersistence, closeRegulatoryObligation, compareRegulatorFollowUpDrafts, correctionAssignment, draftRegulatoryFollowUp, escalateCorrectionDeadline, getDispatchRecoveryStatus, getRegulatoryFollowUpObligations, getRegulatoryFollowUpReviewReadiness, initialRegulatorResponseState, queryResponseEvidenceTimeline, recordRegulatoryFollowUp, regulatoryCaseIntegrity, recordResponseDispatchAttempt, recordCorrectionAuthorityFollowUp, recoverUnacknowledgedCorrectionHandoff, rescheduleLegalReview, reviseCorrectionAuthorityPolicy, reviewRegulatoryFollowUpDraft, type RegulatoryFollowUpStage } from './regulator-response-domain'
 
@@ -159,4 +163,95 @@ describe('governed follow-up execution lineage', () => {
     expect(state.followUpReviews.slice(0, 1)).toEqual(original.followUpReviews)
     expect(regulatoryCaseIntegrity(state, event.responseId)).toEqual([])
   })
+})
+
+function acknowledgedCases() {
+  let current = rescheduleLegalReview(initialRegulatorResponseState, command)
+  current = recordResponseDispatchAttempt(current, { id: 'case-fca-dispatch', expectedRevision: current.revision, role: 'Compliance Lead', responseId: 'REG-FCA-204', releaseReference: 'REL-204', releaseRevision: current.revision, status: 'succeeded', failureClassification: null, retryEligible: false, actor: 'dispatch', attemptedOn: '2026-10-20T19:30:00Z', retryOf: null, dispatchEvidence: 'FCA-DISPATCH' })
+  current = closeRegulatoryObligation(current, { id: 'case-fca-close', expectedRevision: current.revision, role: 'Compliance Lead', responseId: 'REG-FCA-204', evidenceIds: ['EVD-DEVICE-7'], legalApproval: 'FCA-LEGAL', complianceApproval: 'FCA-COMP', releaseReference: 'REL-204', dispatchEvidence: 'FCA-DISPATCH', regulatorAcknowledgement: 'FCA-ACK', outstandingFollowUps: 0, closedBy: 'lead', closedOn: '2026-10-20T20:00:00Z' })
+  current = rescheduleLegalReview(current, { ...command, id: 'case-dpa-review', expectedRevision: current.revision, responseId: 'REG-DPA-118' })
+  current = recordResponseDispatchAttempt(current, { id: 'case-dpa-dispatch', expectedRevision: current.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', releaseReference: 'REL-118', releaseRevision: current.revision, status: 'succeeded', failureClassification: null, retryEligible: false, actor: 'dispatch', attemptedOn: '2026-10-20T19:30:00Z', retryOf: null, dispatchEvidence: 'DPA-DISPATCH' })
+  return closeRegulatoryObligation(current, { id: 'case-dpa-close', expectedRevision: current.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', evidenceIds: [], legalApproval: 'DPA-LEGAL', complianceApproval: 'DPA-COMP', releaseReference: 'REL-118', dispatchEvidence: 'DPA-DISPATCH', regulatorAcknowledgement: 'DPA-ACK', outstandingFollowUps: 0, closedBy: 'lead', closedOn: '2026-10-20T20:00:00Z' })
+}
+const operatorRequest = { id: 'request-open', expectedRevision: 0, role: 'Compliance Lead' as const, obligationId: 'REQUEST-204-B', responseId: 'REG-FCA-204', releaseReference: 'REL-204', requiresReviewedDraft: true as const, obligationType: 'information-request' as const, deadline: '2026-10-30', owner: 'Regulatory liaison', stage: 'opened' as const, evidenceReference: 'REGULATOR-REQUEST-204-B', actor: 'Compliance lead', occurredOn: '2026-10-26' }
+it('requires independent draft approval for newly created obligations and preserves the exact source release', () => {
+  const base = acknowledgedCases()
+  const { requiresReviewedDraft: _flag, ...withoutExplicitPolicy } = operatorRequest; void _flag
+  const guardedDefault = recordRegulatoryFollowUp(base, { ...withoutExplicitPolicy, expectedRevision: base.revision })
+  expect(guardedDefault.followUpEvents[0]?.requiresReviewedDraft).toBe(true)
+  let current = recordRegulatoryFollowUp(base, { ...operatorRequest, expectedRevision: base.revision })
+  current = recordRegulatoryFollowUp(current, { ...operatorRequest, id: 'request-drafted', expectedRevision: current.revision, stage: 'drafted' })
+  expect(() => recordRegulatoryFollowUp(current, { ...operatorRequest, id: 'unsafe-approve', expectedRevision: current.revision, stage: 'approved' })).toThrow('independently reviewed')
+  expect(current.followUpDrafts).toEqual([])
+  current = draftRegulatoryFollowUp(current, { id: 'request-draft', expectedRevision: current.revision, role: 'Compliance Analyst', obligationId: operatorRequest.obligationId, requestedInformation: 'Explain the operational containment sequence', responseStatement: 'The response gives reviewed evidence for the containment sequence.', evidenceReferences: ['CONTAINMENT-204'], amendmentReason: null, owner: operatorRequest.owner, draftedBy: 'analyst', draftedOn: '2026-10-26' })
+  expect(() => recordRegulatoryFollowUp(current, { ...operatorRequest, id: 'unreviewed-approve', expectedRevision: current.revision, stage: 'approved', evidenceReference: 'request-draft' })).toThrow('approved review')
+  current = reviewRegulatoryFollowUpDraft(current, { id: 'request-review', expectedRevision: current.revision, role: 'Compliance Lead', obligationId: operatorRequest.obligationId, draftId: 'request-draft', decision: 'approved', rationale: 'The containment evidence answers this request independently.', reviewer: 'independent lead', reviewedOn: '2026-10-26' })
+  current = recordRegulatoryFollowUp(current, { ...operatorRequest, id: 'request-approval', expectedRevision: current.revision, stage: 'approved', evidenceReference: 'request-draft' })
+  current = recordRegulatoryFollowUp(current, { ...operatorRequest, id: 'request-delivery', expectedRevision: current.revision, stage: 'dispatched', evidenceReference: 'REQUEST-DELIVERY-204' })
+  expect(current.followUpEvents.at(-1)).toMatchObject({ requiresReviewedDraft: true, responseId: 'REG-FCA-204', releaseReference: 'REL-204', approvedDraftId: 'request-draft', approvedReviewId: 'request-review', approvalEventId: 'request-approval' })
+  expect(current.closures).toEqual(base.closures)
+  expect(regulatoryCaseIntegrity(current, 'REG-FCA-204')).toEqual([])
+})
+it('rejects invalid request dates, unacknowledged releases, roles and cross-case identifier reuse atomically', () => {
+  const base = acknowledgedCases()
+  const valid = { ...operatorRequest, expectedRevision: base.revision }
+  for (const change of [{ deadline: '2026-02-31' }, { deadline: '2026-10-25' }, { obligationId: ' ' }, { owner: ' ' }, { role: 'Compliance Analyst' as const }, { occurredOn: '2026-10-20T19:00:00Z' }, { releaseReference: 'UNACKNOWLEDGED' }, { expectedRevision: 0 }]) expect(() => recordRegulatoryFollowUp(base, { ...valid, ...change })).toThrow()
+  expect(base.followUpEvents).toEqual([])
+  const opened = recordRegulatoryFollowUp(base, valid)
+  expect(() => recordRegulatoryFollowUp(opened, { ...valid, id: 'wrong-case', expectedRevision: opened.revision, responseId: 'REG-DPA-118', releaseReference: 'REL-118' })).toThrow('stages')
+  expect(opened.followUpEvents).toHaveLength(1)
+  expect(opened.closures).toEqual(base.closures)
+})
+it('isolates executable case requests, preserves per-obligation drafts and scopes authority decisions', async () => {
+  cleanup(); localStorage.clear()
+  const base = acknowledgedCases()
+  localStorage.setItem(BrowserRegulatorResponsePersistence.key, JSON.stringify(base))
+  const user = userEvent.setup()
+  render(createElement(RegulatorResponseControl))
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Response control role' }), 'Compliance Lead')
+  await user.click(screen.getByRole('button', { name: 'Advance regulator follow-up' }))
+  fireEvent.change(screen.getByLabelText('Response statement'), { target: { value: 'Original FCA statement awaiting source evidence.' } })
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Follow-up acknowledged case' }), 'REG-DPA-118')
+  expect(screen.getByRole('button', { name: 'Advance regulator follow-up' })).toBeDisabled()
+  fireEvent.change(screen.getByLabelText('New obligation ID'), { target: { value: 'REQUEST-DPA-B' } })
+  fireEvent.change(screen.getByLabelText('Regulator request evidence'), { target: { value: 'DPA-REQUEST-B' } })
+  await user.click(screen.getByRole('button', { name: 'Open governed regulator request' }))
+  expect(screen.getByLabelText('Selected follow-up obligation')).toHaveTextContent('REL-118')
+  expect(screen.getByLabelText('Evidence references')).toHaveValue('')
+  fireEvent.change(screen.getByLabelText('Response statement'), { target: { value: 'Distinct DPA response preserving its own draft.' } })
+  fireEvent.change(screen.getByLabelText('Evidence references'), { target: { value: 'DPA-EVIDENCE-B' } })
+  fireEvent.change(screen.getByLabelText('Requested regulator information'), { target: { value: 'Provide the actual DPA request source evidence.' } })
+  await user.click(screen.getByRole('button', { name: 'Save obligation draft' }))
+  expect(new BrowserRegulatorResponsePersistence(localStorage).load()?.followUpDrafts.at(-1)?.draftedBy).toBe('Compliance Lead')
+  await user.click(screen.getByRole('button', { name: 'Approve response draft' }))
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('cannot independently review'))
+  expect(new BrowserRegulatorResponsePersistence(localStorage).load()?.followUpReviews).toEqual([])
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Follow-up acknowledged case' }), 'REG-FCA-204')
+  expect(screen.getByLabelText('Response statement')).toHaveValue('Original FCA statement awaiting source evidence.')
+  expect(screen.getByLabelText('New obligation ID')).toHaveValue('')
+  expect(screen.getByLabelText('Regulator request evidence')).toHaveValue('')
+  fireEvent.change(screen.getByLabelText('New obligation ID'), { target: { value: 'UNSUBMITTED-FCA-REQUEST' } })
+  fireEvent.change(screen.getByLabelText('Regulator request evidence'), { target: { value: 'FCA-UNSUBMITTED-REQUEST-EVIDENCE' } })
+  expect(screen.getByRole('list', { name: 'Regulator follow-up obligations' })).not.toHaveTextContent('information-request')
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Follow-up acknowledged case' }), 'REG-DPA-118')
+  expect(screen.getByLabelText('Response statement')).toHaveValue('Distinct DPA response preserving its own draft.')
+  expect(screen.getByLabelText('New obligation ID')).toHaveValue('REQUEST-DPA-B')
+  expect(screen.getByLabelText('Regulator request evidence')).toHaveValue('DPA-REQUEST-B')
+  await user.click(screen.getByRole('button', { name: 'Revise correction authority policy' }))
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('authority policy revised'))
+  const saved = new BrowserRegulatorResponsePersistence(localStorage).load()
+  expect(saved?.authorityPolicies.at(-1)?.obligationType).toBe('information-request')
+  expect(saved?.followUpEvents.filter((item) => item.responseId === 'REG-FCA-204')).toHaveLength(1)
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Follow-up acknowledged case' }), 'REG-FCA-204')
+  expect(screen.getByLabelText('New obligation ID')).toHaveValue('UNSUBMITTED-FCA-REQUEST')
+  expect(screen.getByLabelText('Regulator request evidence')).toHaveValue('FCA-UNSUBMITTED-REQUEST-EVIDENCE')
+  cleanup(); localStorage.clear()
+})
+it('safely loads malformed regulatory draft storage without changing immutable history', () => {
+  for (const saved of ['null', '[]', '{"REG-FCA-204:OBL-204-A":{"draft":null}}']) {
+    cleanup(); localStorage.clear(); localStorage.setItem('sentinelarc:regulatory-work-input:v1', saved); localStorage.setItem('sentinelarc:regulatory-request-input:v1', saved)
+    render(createElement(RegulatorResponseControl))
+    expect(screen.getByLabelText('Evidence references')).toHaveValue('EVD-DEVICE-7')
+  }
+  cleanup(); localStorage.clear()
 })

@@ -165,3 +165,44 @@ test('corrects an approved follow-up then renews exact approval before dispatch 
   await expect(page.getByRole('list', { name: 'Regulator follow-up obligations' })).toContainText('closed');
   await expect(page.getByRole('list', { name: 'Follow-up release traceability' })).toContainText('EVIDENCE-closed-204');
 });
+
+test('executes an independently reviewed regulator request without overwriting another obligation draft', async ({ page }) => {
+  await page.goto('/breach-notification');
+  await page.getByRole('combobox', { name: 'Response control role', exact: true }).selectOption('Compliance Lead');
+  for (const name of ['Reassign urgent legal review', 'Dispatch approved response', 'Acknowledge and close response', 'Advance regulator follow-up']) await page.getByRole('button', { name, exact: true }).click();
+  await page.getByRole('textbox', { name: 'Response statement', exact: true }).fill('Original obligation has an unfinished statement requiring current custody evidence.');
+  await page.getByLabel('New obligation ID').fill('FCA-REQUEST-B');
+  await page.getByLabel('Regulator request evidence').fill('FCA-REQUEST-EVIDENCE-B');
+  await page.getByLabel('New obligation deadline').fill('2026-10-25');
+  await page.getByRole('button', { name: 'Open governed regulator request' }).click();
+  await expect(page.getByRole('status')).toContainText('valid deadline');
+  await expect(page.getByLabel('Regulator request evidence')).toHaveValue('FCA-REQUEST-EVIDENCE-B');
+  await page.getByLabel('New obligation deadline').fill('2026-10-30');
+  await page.getByRole('button', { name: 'Open governed regulator request' }).click();
+  await expect(page.getByLabel('Selected follow-up obligation')).toContainText('FCA-REQUEST-B');
+  await expect(page.getByLabel('Evidence references', { exact: true })).toHaveValue('');
+  await page.getByRole('button', { name: 'Advance regulator follow-up' }).click();
+  await page.getByRole('button', { name: 'Advance regulator follow-up' }).click();
+  await expect(page.getByRole('status')).toContainText('independently reviewed response draft');
+  await page.getByLabel('Requested regulator information').fill('Explain the independently observed containment sequence.');
+  await page.getByRole('textbox', { name: 'Response statement', exact: true }).fill('The investigation provides current independently observed containment evidence.');
+  await page.getByLabel('Evidence references', { exact: true }).fill('FCA-CONTAINMENT-B');
+  await page.getByRole('combobox', { name: 'Response control role', exact: true }).selectOption('Compliance Analyst');
+  await page.getByRole('button', { name: 'Save obligation draft' }).click();
+  await page.getByRole('combobox', { name: 'Response control role', exact: true }).selectOption('Compliance Lead');
+  await page.getByRole('button', { name: 'Approve response draft' }).click();
+  await page.getByRole('button', { name: 'Advance regulator follow-up' }).click();
+  for (const evidence of ['FCA-B-DISPATCH', 'FCA-B-ACK', 'FCA-B-CLOSE']) {
+    await page.getByLabel('Follow-up stage evidence').fill(evidence);
+    await page.getByRole('button', { name: 'Advance regulator follow-up' }).click();
+  }
+  await expect(page.getByLabel('Selected follow-up obligation')).toContainText('closed');
+  await page.getByRole('combobox', { name: 'Active follow-up obligation', exact: true }).selectOption('OBL-204-A');
+  await expect(page.getByRole('textbox', { name: 'Response statement', exact: true })).toHaveValue('Original obligation has an unfinished statement requiring current custody evidence.');
+  await expect(page.getByRole('list', { name: 'Follow-up release traceability' })).not.toContainText('FCA-B-DISPATCH');
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: 'Response statement', exact: true })).toHaveValue('Original obligation has an unfinished statement requiring current custody evidence.');
+  await page.getByRole('combobox', { name: 'Active follow-up obligation', exact: true }).selectOption('FCA-REQUEST-B');
+  await expect(page.getByRole('list', { name: 'Follow-up release traceability' })).toContainText('FCA-B-CLOSE');
+  await expect(page.getByLabel('Evidence references', { exact: true })).toHaveValue('FCA-CONTAINMENT-B');
+});
