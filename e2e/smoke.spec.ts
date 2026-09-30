@@ -123,3 +123,45 @@ test('review workspace shows source approvals and explicit dispatch blockers',as
 test('recovers an overdue unacknowledged correction handoff with preserved ownership lineage',async({page})=>{await page.goto('/breach-notification');const role=page.getByLabel('Response control role');await role.selectOption('Compliance Lead');await page.getByRole('button',{name:'Reassign urgent legal review'}).click();await page.getByRole('button',{name:'Dispatch approved response'}).click();await page.getByRole('button',{name:'Acknowledge and close response'}).click();await page.getByRole('button',{name:'Advance regulator follow-up'}).click();await page.getByRole('button',{name:'Save obligation draft'}).click();await page.getByLabel('Review rationale').fill('Custody date requires an evidence correction.');await page.getByRole('button',{name:'Return response draft'}).click();await page.getByRole('button',{name:'Escalate overdue correction'}).click();await expect(page.getByLabel('Authority acceptance status')).toContainText('overdue, unresolved');await page.getByRole('button',{name:'Record authority follow-up'}).click();await expect(page.getByRole('list',{name:'Authority follow-up history'})).toContainText('AUTHORITY-REMINDER-204');await page.getByRole('button',{name:'Reassign overdue unacknowledged handoff'}).click();await expect(page.getByRole('list',{name:'Correction schedule history'})).toContainText('replaces unacknowledged');await expect(page.getByRole('list',{name:'Correction schedule history'})).toContainText('Duty compliance lead');await expect(page.getByRole('region',{name:'Assigned regulator corrections'})).toContainText('handoff awaiting Regulatory duty manager');await page.getByRole('button',{name:'Acknowledge correction handoff'}).click();await expect(page.getByRole('region',{name:'Assigned regulator corrections'})).toContainText('owner Regulatory duty manager');await page.reload();await expect(page.getByRole('list',{name:'Correction schedule history'})).toContainText('Regulatory duty manager');});
 
 test('returned correction retains its authority policy after a later revision',async({page})=>{await page.goto('/breach-notification');const role=page.getByLabel('Response control role');await role.selectOption('Compliance Lead');await page.getByRole('button',{name:'Revise correction authority policy'}).click();await expect(page.getByRole('list',{name:'Authority policy history'})).toContainText('Senior compliance lead → Duty compliance lead');await page.getByRole('button',{name:'Reassign urgent legal review'}).click();await page.getByRole('button',{name:'Dispatch approved response'}).click();await page.getByRole('button',{name:'Acknowledge and close response'}).click();await page.getByRole('button',{name:'Advance regulator follow-up'}).click();await page.getByRole('button',{name:'Save obligation draft'}).click();await page.getByLabel('Review rationale').fill('Custody date requires an evidence correction.');await page.getByRole('button',{name:'Return response draft'}).click();const pinned=await page.getByLabel('Pinned correction policy').textContent();await expect(page.getByLabel('Pinned correction policy')).toContainText('primary Senior compliance lead');await page.getByLabel('Policy primary authority').fill('New compliance director');await page.getByLabel('Policy next authority').fill('New duty director');await page.getByRole('button',{name:'Revise correction authority policy'}).click();await expect(page.getByLabel('Pinned correction policy')).toHaveText(pinned ?? '');await page.getByRole('button',{name:'Escalate overdue correction'}).click();await expect(page.getByRole('list',{name:'Correction schedule history'})).toContainText('Senior compliance lead');await page.reload();await expect(page.getByLabel('Pinned correction policy')).toHaveText(pinned ?? '');});
+test('corrects an approved follow-up then renews exact approval before dispatch and closure', async ({ page }) => {
+  await page.goto('/breach-notification');
+  const role = page.getByLabel('Response control role');
+  await role.selectOption('Compliance Lead');
+  await page.getByRole('button', { name: 'Reassign urgent legal review' }).click();
+  await page.getByRole('button', { name: 'Dispatch approved response' }).click();
+  await page.getByRole('button', { name: 'Acknowledge and close response' }).click();
+  await page.getByRole('button', { name: 'Advance regulator follow-up' }).click();
+  await page.getByRole('button', { name: 'Save obligation draft' }).click();
+  await page.getByRole('button', { name: 'Approve response draft' }).click();
+  await page.getByRole('button', { name: 'Advance regulator follow-up' }).click();
+  await page.getByRole('button', { name: 'Advance regulator follow-up' }).click();
+  const lineage = page.getByRole('list', { name: 'Follow-up release traceability' });
+  const originalApproval = await lineage.textContent();
+  await page.getByLabel('Response statement').fill('The custody date is corrected against the sealed transfer register.');
+  await page.getByLabel('Amendment reason').fill('Corrected the custody date before regulator dispatch.');
+  await page.getByRole('button', { name: 'Save obligation draft' }).click();
+  await expect(page.getByRole('region', { name: 'Regulatory follow-up review' })).toContainText('renewed approval before dispatch');
+  await page.getByLabel('Follow-up stage evidence').fill('DISPATCH-CORRECTED-204');
+  await page.getByRole('button', { name: 'Advance regulator follow-up' }).click();
+  await expect(page.getByRole('status')).toContainText('exact independently approved draft');
+  await expect(page.getByLabel('Follow-up stage evidence')).toHaveValue('DISPATCH-CORRECTED-204');
+  await expect(page.getByLabel('Response statement')).toHaveValue('The custody date is corrected against the sealed transfer register.');
+  await expect(page.getByRole('status')).toBeFocused();
+  await page.getByRole('button', { name: 'Renew follow-up approval' }).click();
+  await expect(page.getByRole('status')).toContainText('approved review');
+  await page.getByRole('button', { name: 'Approve response draft' }).click();
+  await page.getByRole('button', { name: 'Renew follow-up approval' }).click();
+  await expect(page.getByRole('status')).toContainText('original approval remains historical');
+  await expect(lineage.locator('li')).toHaveCount(2);
+  for (const stage of ['dispatched', 'acknowledged', 'closed']) {
+    await page.getByLabel('Follow-up stage evidence').fill(`EVIDENCE-${stage}-204`);
+    await page.getByRole('button', { name: 'Advance regulator follow-up' }).click();
+    await expect(page.getByRole('status')).toContainText(`Regulator follow-up ${stage}.`);
+  }
+  await expect(lineage.locator('li')).toHaveCount(5);
+  await expect(lineage).toContainText(originalApproval ?? '');
+  await expect(page.getByLabel('Regulatory archive integrity')).toContainText('verified');
+  await page.reload();
+  await expect(page.getByRole('list', { name: 'Regulator follow-up obligations' })).toContainText('closed');
+  await expect(page.getByRole('list', { name: 'Follow-up release traceability' })).toContainText('EVIDENCE-closed-204');
+});

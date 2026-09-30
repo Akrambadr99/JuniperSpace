@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { acknowledgeCorrectionEscalation, BrowserRegulatorResponsePersistence, closeRegulatoryObligation, compareRegulatorFollowUpDrafts, correctionAssignment, draftRegulatoryFollowUp, escalateCorrectionDeadline, getDispatchRecoveryStatus, getRegulatoryFollowUpObligations, getRegulatoryFollowUpReviewReadiness, initialRegulatorResponseState, queryResponseEvidenceTimeline, recordRegulatoryFollowUp, recordResponseDispatchAttempt, recordCorrectionAuthorityFollowUp, recoverUnacknowledgedCorrectionHandoff, rescheduleLegalReview, reviseCorrectionAuthorityPolicy, reviewRegulatoryFollowUpDraft, type RegulatoryFollowUpStage } from './regulator-response-domain'
+import { acknowledgeCorrectionEscalation, BrowserRegulatorResponsePersistence, closeRegulatoryObligation, compareRegulatorFollowUpDrafts, correctionAssignment, draftRegulatoryFollowUp, escalateCorrectionDeadline, getDispatchRecoveryStatus, getRegulatoryFollowUpObligations, getRegulatoryFollowUpReviewReadiness, initialRegulatorResponseState, queryResponseEvidenceTimeline, recordRegulatoryFollowUp, regulatoryCaseIntegrity, recordResponseDispatchAttempt, recordCorrectionAuthorityFollowUp, recoverUnacknowledgedCorrectionHandoff, rescheduleLegalReview, reviseCorrectionAuthorityPolicy, reviewRegulatoryFollowUpDraft, type RegulatoryFollowUpStage } from './regulator-response-domain'
 
 it('recovers an overdue unacknowledged correction handoff without transferring ownership prematurely', () => {
   const base = structuredClone(initialRegulatorResponseState)
@@ -112,4 +112,51 @@ it('pins the authority schedule to a returned correction despite later policy re
   expect(escalated.correctionRequests).toEqual(beforeRevision.correctionRequests)
   expect(escalated.authorityPolicies.map((item) => item.id)).toContain('policy-3')
   expect(new BrowserRegulatorResponsePersistence({ getItem: () => JSON.stringify({ ...beforeRevision, authorityPolicies: undefined }), setItem: () => undefined }).load()?.authorityPolicies).toHaveLength(3)
+})
+describe('governed follow-up execution lineage', () => {
+  const event = { id: 'lineage-open', expectedRevision: 0, role: 'Compliance Lead' as const, obligationId: 'OBL-LINEAGE', responseId: 'REG-FCA-204', releaseReference: 'REL-LINEAGE', obligationType: 'evidence-supplement' as const, deadline: '2026-10-28', owner: 'Regulatory liaison', stage: 'opened' as const, evidenceReference: 'REQUEST-LINEAGE', actor: 'Compliance lead', occurredOn: '2026-10-26' }
+  const draft = { id: 'lineage-draft-1', expectedRevision: 0, role: 'Compliance Analyst' as const, obligationId: event.obligationId, requestedInformation: 'Confirm the sealed evidence custody', responseStatement: 'The sealed device remained in controlled custody throughout review.', evidenceReferences: ['EVD-DEVICE-7'], amendmentReason: null as string | null, owner: event.owner, draftedBy: 'analyst', draftedOn: '2026-10-26' }
+  function approved() {
+    let state = rescheduleLegalReview(initialRegulatorResponseState, command)
+    state = recordResponseDispatchAttempt(state, { id: 'lineage-dispatch', expectedRevision: state.revision, role: 'Compliance Lead', responseId: event.responseId, releaseReference: event.releaseReference, releaseRevision: 1, status: 'succeeded', failureClassification: null, retryEligible: false, actor: 'dispatch service', attemptedOn: '2026-10-20T19:30:00Z', retryOf: null, dispatchEvidence: 'DISPATCH-LINEAGE' })
+    state = closeRegulatoryObligation(state, { id: 'lineage-close', expectedRevision: state.revision, role: 'Compliance Lead', responseId: event.responseId, evidenceIds: ['EVD-DEVICE-7'], legalApproval: 'LEGAL', complianceApproval: 'COMP', releaseReference: event.releaseReference, dispatchEvidence: 'DISPATCH-LINEAGE', regulatorAcknowledgement: 'ACK', outstandingFollowUps: 0, closedBy: 'lead', closedOn: '2026-10-20T20:00:00Z' })
+    state = recordRegulatoryFollowUp(state, { ...event, expectedRevision: state.revision })
+    state = draftRegulatoryFollowUp(state, { ...draft, expectedRevision: state.revision })
+    state = reviewRegulatoryFollowUpDraft(state, { id: 'lineage-review-1', expectedRevision: state.revision, role: 'Compliance Lead', obligationId: event.obligationId, draftId: draft.id, decision: 'approved', rationale: 'Custody statement and evidence reviewed.', reviewer: 'Compliance lead', reviewedOn: '2026-10-26' })
+    state = recordRegulatoryFollowUp(state, { ...event, id: 'lineage-drafted', expectedRevision: state.revision, stage: 'drafted', evidenceReference: draft.id })
+    return recordRegulatoryFollowUp(state, { ...event, id: 'lineage-approved', expectedRevision: state.revision, stage: 'approved', evidenceReference: draft.id })
+  }
+  it('pins one exact draft and review through dispatch acknowledgement and closure', () => {
+    let state = approved()
+    const originalApproval = structuredClone(state.followUpEvents.at(-1))
+    for (const stage of ['dispatched', 'acknowledged', 'closed'] as const) state = recordRegulatoryFollowUp(state, { ...event, id: `lineage-${stage}`, expectedRevision: state.revision, stage, evidenceReference: `EVIDENCE-${stage}` })
+    expect(state.followUpEvents.slice(-3)).toMatchObject([{ approvedDraftId: draft.id, approvedReviewId: 'lineage-review-1', approvalEventId: 'lineage-approved' }, { approvedDraftId: draft.id, approvedReviewId: 'lineage-review-1', approvalEventId: 'lineage-approved' }, { approvedDraftId: draft.id, approvedReviewId: 'lineage-review-1', approvalEventId: 'lineage-approved' }])
+    expect(state.followUpEvents.find((item) => item.id === 'lineage-approved')).toEqual(originalApproval)
+    expect(regulatoryCaseIntegrity(state, event.responseId)).toEqual([])
+    expect(() => draftRegulatoryFollowUp(state, { ...draft, id: 'after-dispatch', expectedRevision: state.revision, amendmentReason: 'Cannot change a dispatched response.' })).toThrow('open regulator follow-up')
+  })
+  it('blocks mixed obligation identities and backdated progression without partial mutation', () => {
+    const state = approved()
+    const before = structuredClone(state)
+    const next = { ...event, id: 'mixed-lineage', expectedRevision: state.revision, stage: 'dispatched' as const, evidenceReference: 'SEND' }
+    for (const changed of [{ owner: 'Different liaison' }, { deadline: '2026-11-05' }, { obligationType: 'information-request' as const }]) expect(() => recordRegulatoryFollowUp(state, { ...next, ...changed })).toThrow('original case')
+    expect(() => recordRegulatoryFollowUp(state, { ...next, occurredOn: '2026-10-25' })).toThrow('preceding stage')
+    expect(state).toEqual(before)
+  })
+  it('renews approval after pre-dispatch correction while preserving original decisions', () => {
+    const original = approved()
+    let state = draftRegulatoryFollowUp(original, { ...draft, id: 'lineage-draft-2', expectedRevision: original.revision, amendmentReason: 'Corrected the sealed device custody date.', responseStatement: 'The sealed device custody date was corrected from the original register.' })
+    const dispatch = { ...event, id: 'dispatch-corrected', stage: 'dispatched' as const, evidenceReference: 'CORRECTED-SEND' }
+    expect(() => recordRegulatoryFollowUp(state, { ...dispatch, expectedRevision: state.revision })).toThrow('exact independently approved')
+    expect(getRegulatoryFollowUpReviewReadiness(state, event.obligationId)?.blockers).toContain('Current draft needs renewed approval before dispatch')
+    const approval = { ...event, id: 'renewed-approval', stage: 'approved' as const, evidenceReference: 'lineage-draft-2' }
+    expect(() => recordRegulatoryFollowUp(state, { ...approval, expectedRevision: state.revision })).toThrow('approved review')
+    state = reviewRegulatoryFollowUpDraft(state, { id: 'lineage-review-2', expectedRevision: state.revision, role: 'Compliance Lead', obligationId: event.obligationId, draftId: 'lineage-draft-2', decision: 'approved', rationale: 'Corrected custody source and original evidence reviewed.', reviewer: 'Compliance lead', reviewedOn: '2026-10-26' })
+    state = recordRegulatoryFollowUp(state, { ...approval, expectedRevision: state.revision })
+    state = recordRegulatoryFollowUp(state, { ...dispatch, expectedRevision: state.revision })
+    expect(state.followUpEvents.at(-1)).toMatchObject({ approvedDraftId: 'lineage-draft-2', approvedReviewId: 'lineage-review-2', approvalEventId: 'renewed-approval' })
+    expect(state.followUpEvents.filter((item) => item.stage === 'approved')).toHaveLength(2)
+    expect(state.followUpReviews.slice(0, 1)).toEqual(original.followUpReviews)
+    expect(regulatoryCaseIntegrity(state, event.responseId)).toEqual([])
+  })
 })

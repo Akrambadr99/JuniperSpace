@@ -5,7 +5,7 @@ export interface LegalReviewChange { id: string; responseId: string; previousRev
 export interface RegulatoryClosure { id: string; responseId: string; reviewChangeId: string; evidenceIds: string[]; legalApproval: string; complianceApproval: string; releaseReference: string; dispatchEvidence: string; regulatorAcknowledgement: string; outstandingFollowUps: 0; closedBy: string; closedOn: string; immutable: true }
 export interface ResponseDispatchAttempt { id: string; responseId: string; releaseReference: string; releaseRevision: number; attemptNumber: number; status: 'failed' | 'succeeded'; failureClassification: string | null; retryEligible: boolean; actor: string; attemptedOn: string; retryOf: string | null; dispatchEvidence: string | null; immutable: true }
 export type RegulatoryFollowUpStage = 'opened' | 'drafted' | 'approved' | 'dispatched' | 'acknowledged' | 'closed'
-export interface RegulatoryFollowUpEvent { id: string; obligationId: string; responseId: string; releaseReference: string; obligationType: 'information-request' | 'remediation-update' | 'evidence-supplement'; deadline: string; owner: string; stage: RegulatoryFollowUpStage; evidenceReference: string; actor: string; occurredOn: string; sourceRevision: number; immutable: true }
+export interface RegulatoryFollowUpEvent { id: string; obligationId: string; responseId: string; releaseReference: string; obligationType: 'information-request' | 'remediation-update' | 'evidence-supplement'; deadline: string; owner: string; stage: RegulatoryFollowUpStage; evidenceReference: string; actor: string; occurredOn: string; sourceRevision: number; approvedDraftId?: string; approvedReviewId?: string; approvalEventId?: string; immutable: true }
 export interface FollowUpResponseDraft { id: string; obligationId: string; sourceReleaseReference: string; previousDraftId: string | null; correctionRequestId?: string; requestedInformation: string; responseStatement: string; evidenceReferences: string[]; amendmentReason: string | null; owner: string; draftedBy: string; draftedOn: string; sourceRevision: number; immutable: true }
 export interface FollowUpDraftReview { id: string; obligationId: string; draftId: string; sourceReleaseReference: string; decision: 'approved' | 'returned'; rationale: string; reviewer: string; reviewedOn: string; immutable: true }
 export interface CorrectionAuthorityPolicy { id: string; obligationType: RegulatoryFollowUpEvent['obligationType']; effectiveOn: string; approvedBy: string; primaryAuthority: string | null; nextAuthority: string | null; acknowledgementDays: number; immutable: true }
@@ -35,6 +35,7 @@ export function regulatoryCaseIntegrity(state: RegulatorResponseState, responseI
   if (followUps.some((item) => !closures.some((closure) => closure.releaseReference === item.releaseReference))) reasons.push('Follow-up obligation lacks its acknowledged release.')
   if (drafts.some((item) => !closures.some((closure) => closure.releaseReference === item.sourceReleaseReference) || (item.previousDraftId && !drafts.some((prior) => prior.id === item.previousDraftId)))) reasons.push('Correction draft has incomplete release or prior-draft lineage.')
   if (reviews.some((item) => !drafts.some((draft) => draft.id === item.draftId))) reasons.push('Follow-up review references a missing response draft.')
+  if (followUps.some((event) => event.approvedDraftId && (!drafts.some((draft) => draft.id === event.approvedDraftId && draft.obligationId === event.obligationId && draft.sourceReleaseReference === event.releaseReference) || !reviews.some((review) => review.id === event.approvedReviewId && review.draftId === event.approvedDraftId && review.decision === 'approved') || (event.approvalEventId && !followUps.some((approval) => approval.id === event.approvalEventId && approval.stage === 'approved' && approval.obligationId === event.obligationId && approval.evidenceReference === event.approvedDraftId))))) reasons.push('Follow-up execution has missing or conflicting approved draft lineage.')
   if (corrections.some((item) => !reviews.some((review) => review.id === item.returnedReviewId && review.decision === 'returned') || !drafts.some((draft) => draft.id === item.sourceDraftId))) reasons.push('Correction request lacks the returned review or source draft.')
   if (schedules.some((item) => item.replacesUnacknowledgedId && !schedules.some((prior) => prior.id === item.replacesUnacknowledgedId)) || state.correctionAcknowledgements.some((item) => schedules.some((schedule) => schedule.id === item.scheduleId) && !corrections.some((request) => request.id === item.correctionRequestId))) reasons.push('Correction reassignment or acknowledgement lineage is incomplete.')
   const pinnedPolicies = [...corrections.map((item) => item.authorityPolicyId), ...schedules.map((item) => item.policyRevisionId)].filter((id): id is string => Boolean(id))
@@ -223,15 +224,23 @@ export function recordRegulatoryFollowUp(state: RegulatorResponseState, command:
   const history = state.followUpEvents.filter((item) => item.obligationId === command.obligationId)
   const order: RegulatoryFollowUpStage[] = ['opened', 'drafted', 'approved', 'dispatched', 'acknowledged', 'closed']
   const previous = history.at(-1)
-  if ((history.length === 0 && command.stage !== 'opened') || (previous && order.indexOf(command.stage) !== order.indexOf(previous.stage) + 1)) throw new Error('Regulator follow-up stages must preserve approval, dispatch, acknowledgement, and closure order.')
-  if (!command.deadline || !command.owner || !command.evidenceReference.trim()) throw new Error('Follow-up deadline, owner, and stage evidence are required.')
   const latestDraft = state.followUpDrafts.filter((item) => item.obligationId === command.obligationId).at(-1)
+  const renewsApproval = previous?.stage === 'approved' && command.stage === 'approved' && latestDraft !== undefined && latestDraft.id !== previous.evidenceReference && command.evidenceReference === latestDraft.id
+  if ((history.length === 0 && command.stage !== 'opened') || (previous && !renewsApproval && order.indexOf(command.stage) !== order.indexOf(previous.stage) + 1)) throw new Error('Regulator follow-up stages must preserve approval, dispatch, acknowledgement, and closure order.')
+  const original = history[0]
+  if (original && (original.responseId !== command.responseId || original.releaseReference !== command.releaseReference || original.obligationType !== command.obligationType || original.owner !== command.owner || original.deadline !== command.deadline)) throw new Error('Follow-up progression must preserve its original case, release, obligation type, owner and deadline.')
+  if (previous && command.occurredOn < previous.occurredOn) throw new Error('Follow-up evidence cannot predate its preceding stage.')
+  if (!command.deadline || !command.owner || !command.evidenceReference.trim()) throw new Error('Follow-up deadline, owner, and stage evidence are required.')
   if (command.stage === 'approved' && latestDraft) {
     if (command.evidenceReference !== latestDraft.id) throw new Error('Legal approval must reference the latest obligation-specific draft.')
     if (state.followUpReviews.filter((item) => item.draftId === latestDraft.id).at(-1)?.decision !== 'approved') throw new Error('Latest follow-up draft requires an approved review before release.')
   }
+  const approval = history.filter((item) => item.stage === 'approved').at(-1)
+  const approvedReview = latestDraft ? state.followUpReviews.find((item) => item.draftId === latestDraft.id && item.decision === 'approved') : undefined
+  if (latestDraft && ['dispatched', 'acknowledged', 'closed'].includes(command.stage) && (approval?.evidenceReference !== latestDraft.id || !approvedReview || (approval.approvedReviewId && approval.approvedReviewId !== approvedReview.id))) throw new Error('Follow-up execution requires the exact independently approved draft and review lineage.')
+  const pins = latestDraft && approvedReview && (command.stage === 'approved' || ['dispatched', 'acknowledged', 'closed'].includes(command.stage)) ? { approvedDraftId: latestDraft.id, approvedReviewId: approvedReview.id, ...(approval && command.stage !== 'approved' ? { approvalEventId: approval.id } : {}) } : {}
   const next = structuredClone(state)
-  next.followUpEvents.push({ ...command, evidenceReference: command.evidenceReference.trim(), sourceRevision: state.revision, immutable: true })
+  next.followUpEvents.push({ ...command, ...pins, evidenceReference: command.evidenceReference.trim(), sourceRevision: state.revision, immutable: true })
   next.revision += 1
   return next
 }
@@ -242,7 +251,7 @@ export function draftRegulatoryFollowUp(state: RegulatorResponseState, command: 
   if (!(new Set<string>(['Compliance Analyst', 'Compliance Lead'])).has(command.role)) throw new Error('Only compliance staff can draft regulator follow-up responses.')
   const history = state.followUpEvents.filter((item) => item.obligationId === command.obligationId)
   const obligation = history.at(-1)
-  if (!obligation || !['opened', 'drafted'].includes(obligation.stage)) throw new Error('An open regulator follow-up obligation is required for drafting.')
+  if (!obligation || !['opened', 'drafted', 'approved'].includes(obligation.stage)) throw new Error('An open regulator follow-up obligation is required for drafting.')
   const previous = state.followUpDrafts.filter((item) => item.obligationId === command.obligationId).at(-1) ?? null
   if (command.requestedInformation.trim().length < 10 || command.responseStatement.trim().length < 20 || command.evidenceReferences.length === 0 || !command.owner.trim() || (previous && (command.amendmentReason?.trim().length ?? 0) < 15)) throw new Error('Response statement, requested information, evidence, owner, and amendment reason are required.')
   const returned = state.followUpReviews.find((item) => item.draftId === previous?.id && item.decision === 'returned')
@@ -263,7 +272,9 @@ export function reviewRegulatoryFollowUpDraft(state: RegulatorResponseState, com
   const latest = state.followUpDrafts.filter((item) => item.obligationId === command.obligationId).at(-1)
   const stage = state.followUpEvents.filter((item) => item.obligationId === command.obligationId).at(-1)?.stage
   if (!latest) throw new Error('Review must target the latest open obligation draft.')
-  if (latest.id !== command.draftId || (stage !== 'opened' && stage !== 'drafted')) throw new Error('Review must target the latest open obligation draft.')
+  if (latest.id !== command.draftId || (stage !== 'opened' && stage !== 'drafted' && stage !== 'approved')) throw new Error('Review must target the latest open obligation draft.')
+  const approvedStage = state.followUpEvents.filter((item) => item.obligationId === command.obligationId && item.stage === 'approved').at(-1)
+  if (stage === 'approved' && approvedStage?.evidenceReference === latest.id) throw new Error('An already released draft must be amended before independent reapproval.')
   if (!command.reviewer.trim() || command.rationale.trim().length < 15) throw new Error('Reviewer and decision rationale are required.')
   if (latest.draftedBy.trim().toLowerCase() === command.reviewer.trim().toLowerCase()) throw new Error('Draft author cannot independently review the same response.')
   if (state.followUpReviews.some((item) => item.draftId === latest.id)) throw new Error('This draft already has a review decision. Prepare an amended draft.')
@@ -282,7 +293,9 @@ export function getRegulatoryFollowUpReviewReadiness(state: RegulatorResponseSta
   const obligation = state.followUpEvents.filter((item) => item.obligationId === obligationId).at(-1) ?? null
   const sourceRelease = state.closures.find((item) => item.releaseReference === draft.sourceReleaseReference && item.responseId === obligation?.responseId) ?? null
   const review = state.followUpReviews.find((item) => item.draftId === draft.id) ?? null
+  const latestApproval = state.followUpEvents.filter((item) => item.obligationId === obligationId && item.stage === 'approved').at(-1)
   const blockers = [...(!sourceRelease ? ['Acknowledged source release unavailable'] : []), ...(draft.evidenceReferences.length === 0 ? ['Selected evidence missing'] : []), ...(review?.decision === 'returned' ? ['Current draft returned for correction'] : !review ? ['Current draft requires independent review'] : []), ...(obligation?.stage !== 'approved' && obligation?.stage !== 'dispatched' && obligation?.stage !== 'acknowledged' && obligation?.stage !== 'closed' ? ['Follow-up approval stage pending'] : [])]
+  if (latestApproval && latestApproval.evidenceReference !== draft.id) blockers.push('Current draft needs renewed approval before dispatch')
   const dispatchReady = blockers.length === 0 && obligation?.stage === 'approved'
   const dispatchStatus = obligation?.stage === 'dispatched' || obligation?.stage === 'acknowledged' || obligation?.stage === 'closed' ? `follow-up ${obligation.stage}` : dispatchReady ? 'approved for dispatch' : blockers.join('; ')
   return { draft, obligation, sourceRelease, review, blockers, dispatchReady, dispatchStatus }
