@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import userEvent from '@testing-library/user-event'
 import { RegulatorResponseControl } from './RegulatorResponseControl'
 import { describe, expect, it } from 'vitest'
-import { acknowledgeCorrectionEscalation, BrowserRegulatorResponsePersistence, closeRegulatoryObligation, compareRegulatorFollowUpDrafts, correctionAssignment, draftRegulatoryFollowUp, escalateCorrectionDeadline, getDispatchRecoveryStatus, getRegulatoryFollowUpObligations, getRegulatoryFollowUpReviewReadiness, initialRegulatorResponseState, queryResponseEvidenceTimeline, recordRegulatoryFollowUp, regulatoryCaseIntegrity, recordResponseDispatchAttempt, recordCorrectionAuthorityFollowUp, recoverUnacknowledgedCorrectionHandoff, rescheduleLegalReview, reviseCorrectionAuthorityPolicy, reviewRegulatoryFollowUpDraft, type RegulatoryFollowUpStage } from './regulator-response-domain'
+import { acknowledgeCorrectionEscalation, BrowserRegulatorResponsePersistence, closeRegulatoryObligation, compareRegulatorFollowUpDrafts, correctionAssignment, draftRegulatoryFollowUp, escalateCorrectionDeadline, getDispatchRecoveryStatus, getRegulatoryFollowUpObligations, getRegulatoryFollowUpReviewReadiness, initialRegulatorResponseState, prepareCaseRelease, reviewCaseRelease, captureRegulatoryCaseArchive, queryResponseEvidenceTimeline, recordRegulatoryFollowUp, regulatoryCaseIntegrity, recordResponseDispatchAttempt, recordCorrectionAuthorityFollowUp, recoverUnacknowledgedCorrectionHandoff, rescheduleLegalReview, reviseCorrectionAuthorityPolicy, reviewRegulatoryFollowUpDraft, type RegulatoryFollowUpStage } from './regulator-response-domain'
 
 it('recovers an overdue unacknowledged correction handoff without transferring ownership prematurely', () => {
   const base = structuredClone(initialRegulatorResponseState)
@@ -169,9 +169,11 @@ function acknowledgedCases() {
   let current = rescheduleLegalReview(initialRegulatorResponseState, command)
   current = recordResponseDispatchAttempt(current, { id: 'case-fca-dispatch', expectedRevision: current.revision, role: 'Compliance Lead', responseId: 'REG-FCA-204', releaseReference: 'REL-204', releaseRevision: current.revision, status: 'succeeded', failureClassification: null, retryEligible: false, actor: 'dispatch', attemptedOn: '2026-10-20T19:30:00Z', retryOf: null, dispatchEvidence: 'FCA-DISPATCH' })
   current = closeRegulatoryObligation(current, { id: 'case-fca-close', expectedRevision: current.revision, role: 'Compliance Lead', responseId: 'REG-FCA-204', evidenceIds: ['EVD-DEVICE-7'], legalApproval: 'FCA-LEGAL', complianceApproval: 'FCA-COMP', releaseReference: 'REL-204', dispatchEvidence: 'FCA-DISPATCH', regulatorAcknowledgement: 'FCA-ACK', outstandingFollowUps: 0, closedBy: 'lead', closedOn: '2026-10-20T20:00:00Z' })
+  current = prepareCaseRelease(current, { ...dpaPreparation, id: 'case-dpa-source', expectedRevision: current.revision })
   current = rescheduleLegalReview(current, { ...command, id: 'case-dpa-review', expectedRevision: current.revision, responseId: 'REG-DPA-118' })
+  current = reviewCaseRelease(current, { id: 'case-dpa-legal', expectedRevision: current.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', preparationId: 'case-dpa-source', caseLegalReview: true, decision: 'approved', rationale: 'The DPA amendment and source evidence satisfy the independently assigned legal obligation.', reviewer: command.reviewer, reviewedOn: command.reviewOn })
   current = recordResponseDispatchAttempt(current, { id: 'case-dpa-dispatch', expectedRevision: current.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', releaseReference: 'REL-118', releaseRevision: current.revision, status: 'succeeded', failureClassification: null, retryEligible: false, actor: 'dispatch', attemptedOn: '2026-10-20T19:30:00Z', retryOf: null, dispatchEvidence: 'DPA-DISPATCH' })
-  return closeRegulatoryObligation(current, { id: 'case-dpa-close', expectedRevision: current.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', evidenceIds: [], legalApproval: 'DPA-LEGAL', complianceApproval: 'DPA-COMP', releaseReference: 'REL-118', dispatchEvidence: 'DPA-DISPATCH', regulatorAcknowledgement: 'DPA-ACK', outstandingFollowUps: 0, closedBy: 'lead', closedOn: '2026-10-20T20:00:00Z' })
+  return closeRegulatoryObligation(current, { id: 'case-dpa-close', expectedRevision: current.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', evidenceIds: ['DPA-CUSTODY-118'], legalApproval: 'case-dpa-legal', complianceApproval: 'case-dpa-close', releaseReference: 'REL-118', dispatchEvidence: 'DPA-DISPATCH', regulatorAcknowledgement: 'DPA-ACK', outstandingFollowUps: 0, closedBy: 'lead', closedOn: '2026-10-20T20:00:00Z' })
 }
 const operatorRequest = { id: 'request-open', expectedRevision: 0, role: 'Compliance Lead' as const, obligationId: 'REQUEST-204-B', responseId: 'REG-FCA-204', releaseReference: 'REL-204', requiresReviewedDraft: true as const, obligationType: 'information-request' as const, deadline: '2026-10-30', owner: 'Regulatory liaison', stage: 'opened' as const, evidenceReference: 'REGULATOR-REQUEST-204-B', actor: 'Compliance lead', occurredOn: '2026-10-26' }
 it('requires independent draft approval for newly created obligations and preserves the exact source release', () => {
@@ -253,5 +255,117 @@ it('safely loads malformed regulatory draft storage without changing immutable h
     render(createElement(RegulatorResponseControl))
     expect(screen.getByLabelText('Evidence references')).toHaveValue('EVD-DEVICE-7')
   }
+  cleanup(); localStorage.clear()
+})
+
+const dpaPreparation = { id: 'dpa-source', expectedRevision: 0, role: 'Compliance Analyst' as const, responseId: 'REG-DPA-118', casePreparation: true as const, evidenceIds: ['DPA-CUSTODY-118'], amendmentEvidence: 'DPA-AMEND-118', reason: 'Corrected recipient evidence supports the DPA-specific response amendment.', preparedBy: 'Compliance Analyst', preparedOn: '2026-10-20T18:00:00Z' }
+function approvedDpa() {
+  let state = prepareCaseRelease(initialRegulatorResponseState, dpaPreparation)
+  state = rescheduleLegalReview(state, { id: 'dpa-schedule', expectedRevision: state.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', reviewer: 'DPA privacy counsel', reviewOn: '2026-10-22T18:00:00Z', asOf: '2026-10-20T09:00:00Z', reason: 'Independent DPA counsel reviews the prepared amendment before its deadline.' })
+  return reviewCaseRelease(state, { id: 'dpa-legal', expectedRevision: state.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', preparationId: 'dpa-source', caseLegalReview: true, decision: 'approved', rationale: 'The DPA amendment and custody evidence satisfy the assigned legal obligation.', reviewer: 'DPA privacy counsel', reviewedOn: '2026-10-22T18:00:00Z' })
+}
+const dpaDispatch = { id: 'dpa-dispatch', expectedRevision: 3, role: 'Compliance Lead' as const, responseId: 'REG-DPA-118', releaseReference: 'DPA-RELEASE-118-R1', releaseRevision: 3, status: 'succeeded' as const, failureClassification: null, retryEligible: false, actor: 'Regulatory dispatch lead', attemptedOn: '2026-10-22T19:00:00Z', retryOf: null, dispatchEvidence: 'DPA-DISPATCH-118' }
+it('releases and acknowledges an actual DPA case with exact prepared-source and legal approval lineage', () => {
+  const approved = approvedDpa(), dispatched = recordResponseDispatchAttempt(approved, dpaDispatch)
+  expect(dispatched.dispatchAttempts[0]).toMatchObject({ responseId: 'REG-DPA-118', preparationId: 'dpa-source', legalReviewId: 'dpa-legal', immutable: true })
+  const closing = { id: 'dpa-close', expectedRevision: dispatched.revision, role: 'Compliance Lead' as const, responseId: 'REG-DPA-118', evidenceIds: ['DPA-CUSTODY-118'], legalApproval: 'dpa-legal', complianceApproval: 'dpa-close', releaseReference: 'DPA-RELEASE-118-R1', dispatchEvidence: 'DPA-DISPATCH-118', regulatorAcknowledgement: 'DPA-ACK-118', outstandingFollowUps: 0, closedBy: 'Compliance lead', closedOn: '2026-10-22T20:00:00Z' }
+  expect(() => closeRegulatoryObligation(dispatched, { ...closing, closedBy: 'DPA privacy counsel' })).toThrow('independent compliance')
+  expect(() => closeRegulatoryObligation(dispatched, { ...closing, legalApproval: 'LEGAL-APP-204' })).toThrow('pin the dispatched')
+  const closed = closeRegulatoryObligation(dispatched, closing)
+  expect(closed.responses.find((item) => item.responseId === 'REG-DPA-118')?.released).toBe(true)
+  expect(closed.responses.find((item) => item.responseId === 'REG-FCA-204')).toEqual(initialRegulatorResponseState.responses[0])
+  expect(regulatoryCaseIntegrity(closed, 'REG-DPA-118')).toEqual([])
+  const archived = captureRegulatoryCaseArchive(closed, { id: 'dpa-archive', expectedRevision: closed.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', createdBy: 'Compliance lead', createdOn: '2026-10-23' })
+  expect(archived.caseArchives[0]?.casePreparations).toEqual(closed.casePreparations)
+  expect(archived.caseArchives[0]?.caseLegalReviews).toEqual(closed.caseLegalReviews)
+})
+it('rejects missing amendment proof stale preparation wrong reviewer and premature dispatch without mutation', () => {
+  expect(() => prepareCaseRelease(initialRegulatorResponseState, { ...dpaPreparation, amendmentEvidence: '' })).toThrow('amendment proof')
+  expect(() => prepareCaseRelease(initialRegulatorResponseState, { ...dpaPreparation, role: 'Compliance Lead' })).toThrow('analyst')
+  const prepared = prepareCaseRelease(initialRegulatorResponseState, dpaPreparation)
+  const scheduled = rescheduleLegalReview(prepared, { id: 'dpa-schedule', expectedRevision: prepared.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', reviewer: 'DPA counsel', reviewOn: '2026-10-22T18:00:00Z', asOf: '2026-10-20T09:00:00Z', reason: 'Review the DPA source amendment before its governed deadline.' })
+  expect(() => recordResponseDispatchAttempt(scheduled, { ...dpaDispatch, expectedRevision: scheduled.revision, releaseRevision: scheduled.revision })).toThrow('independent legal approval')
+  const review = { id: 'review-dpa', expectedRevision: scheduled.revision, role: 'Compliance Lead' as const, responseId: 'REG-DPA-118', preparationId: 'dpa-source', caseLegalReview: true as const, decision: 'approved' as const, rationale: 'Current source evidence satisfies the governing DPA obligation.', reviewer: 'DPA counsel', reviewedOn: '2026-10-22T18:00:00Z' }
+  expect(() => reviewCaseRelease(scheduled, { ...review, reviewer: 'FCA counsel' })).toThrow('assigned legal reviewer')
+  expect(() => reviewCaseRelease(scheduled, { ...review, preparationId: 'FCA-preparation' })).toThrow('Current unreviewed')
+  expect(() => reviewCaseRelease(scheduled, { ...review, expectedRevision: 0 })).toThrow('Refresh')
+  expect(scheduled.dispatchAttempts).toEqual([]); expect(scheduled.caseLegalReviews).toEqual([])
+})
+it('preserves returned and failed release history while requiring new approval and distinct corrected release identity', () => {
+  const approved = approvedDpa()
+  const failed = recordResponseDispatchAttempt(approved, { ...dpaDispatch, id: 'failed-dpa', status: 'failed', failureClassification: 'DPA-gateway-unavailable', dispatchEvidence: null, retryEligible: true })
+  expect(() => prepareCaseRelease(failed, { ...dpaPreparation, id: 'backdated-correction', expectedRevision: failed.revision, preparedOn: '2026-10-22T18:30:00Z' })).toThrow('valid business timestamp')
+  expect(failed.casePreparations).toEqual(approved.casePreparations)
+  const corrected = prepareCaseRelease(failed, { ...dpaPreparation, id: 'dpa-corrected', expectedRevision: failed.revision, amendmentEvidence: 'DPA-AMEND-118-R2', preparedOn: '2026-10-22T19:30:00Z' })
+  expect(() => recordResponseDispatchAttempt(corrected, { ...dpaDispatch, expectedRevision: corrected.revision, releaseRevision: corrected.revision })).toThrow('independent legal approval')
+  const reapproved = reviewCaseRelease(corrected, { id: 'dpa-reapproved', expectedRevision: corrected.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', preparationId: 'dpa-corrected', caseLegalReview: true, decision: 'approved', rationale: 'Corrected DPA source amendment is independently accepted for the new release.', reviewer: 'DPA privacy counsel', reviewedOn: '2026-10-22T20:00:00Z' })
+  expect(() => recordResponseDispatchAttempt(reapproved, { ...dpaDispatch, expectedRevision: reapproved.revision, releaseRevision: reapproved.revision, attemptedOn: '2026-10-22T20:30:00Z' })).toThrow('distinct release reference')
+  const dispatched = recordResponseDispatchAttempt(reapproved, { ...dpaDispatch, id: 'new-dpa-dispatch', expectedRevision: reapproved.revision, releaseRevision: reapproved.revision, releaseReference: 'DPA-RELEASE-118-R2', attemptedOn: '2026-10-22T20:30:00Z' })
+  expect(dispatched.dispatchAttempts[0]).toEqual(failed.dispatchAttempts[0]); expect(dispatched.casePreparations[0]).toEqual(approved.casePreparations[0]);
+  expect(dispatched.casePreparations[1]?.previousPreparationId).toBe('dpa-source')
+  expect(dispatched.dispatchAttempts[1]).toMatchObject({ preparationId: 'dpa-corrected', legalReviewId: 'dpa-reapproved' })
+  const old = new BrowserRegulatorResponsePersistence({ getItem: () => JSON.stringify({ ...initialRegulatorResponseState, casePreparations: undefined, caseLegalReviews: undefined }), setItem: () => undefined }).load()
+  expect(old?.casePreparations).toEqual([]); expect(old?.caseLegalReviews).toEqual([])
+})
+it('invalidates approval after legal review reassignment and requires the new assigned reviewer', () => {
+  const approved = approvedDpa()
+  const reassigned = rescheduleLegalReview(approved, { id: 'dpa-new-owner', expectedRevision: approved.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', reviewer: 'Alternate DPA counsel', reviewOn: '2026-10-23T18:00:00Z', asOf: '2026-10-22T09:00:00Z', reason: 'The original legal reviewer is unavailable for the corrected release.' })
+  expect(() => recordResponseDispatchAttempt(reassigned, { ...dpaDispatch, expectedRevision: reassigned.revision, releaseRevision: reassigned.revision })).toThrow('independent legal approval')
+  const renewed = reviewCaseRelease(reassigned, { id: 'new-owner-approval', expectedRevision: reassigned.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', preparationId: 'dpa-source', caseLegalReview: true, decision: 'approved', rationale: 'Alternate assigned counsel accepted the existing source package independently.', reviewer: 'Alternate DPA counsel', reviewedOn: '2026-10-23T18:00:00Z' })
+  expect(recordResponseDispatchAttempt(renewed, { ...dpaDispatch, expectedRevision: renewed.revision, releaseRevision: renewed.revision, attemptedOn: '2026-10-23T19:00:00Z' }).dispatchAttempts[0]?.legalReviewId).toBe('new-owner-approval')
+})
+it('preserves release draft input per case and rejects incomplete DPA source evidence in the UI', async () => {
+  cleanup(); localStorage.clear(); const user = userEvent.setup(); render(createElement(RegulatorResponseControl))
+  const selected = screen.getByLabelText('Active release case')
+  await user.selectOptions(selected, 'REG-DPA-118')
+  await user.type(screen.getByLabelText('Case source evidence'), 'DPA-EVIDENCE-118')
+  await user.click(screen.getByRole('button', { name: 'Prepare case release evidence' }))
+  expect(screen.getByRole('status')).toHaveTextContent('amendment proof')
+  await user.selectOptions(selected, 'REG-FCA-204'); expect(screen.getByLabelText('Case source evidence')).toHaveValue('EVD-DEVICE-7')
+  await user.selectOptions(selected, 'REG-DPA-118'); expect(screen.getByLabelText('Case source evidence')).toHaveValue('DPA-EVIDENCE-118')
+  await user.type(screen.getByLabelText('Case amendment evidence'), 'DPA-AMEND-118')
+  await user.click(screen.getByRole('button', { name: 'Prepare case release evidence' }))
+  expect(screen.getByRole('list', { name: 'Case preparation history' })).toHaveTextContent('DPA-AMEND-118')
+  expect(screen.getByRole('button', { name: 'Dispatch approved response' })).toBeDisabled()
+  cleanup(); localStorage.clear()
+})
+
+it('replays exact case commands but rejects conflicting identities and blank review or closure attribution without mutation', () => {
+  const prepared = prepareCaseRelease(initialRegulatorResponseState, dpaPreparation)
+  expect(prepareCaseRelease(prepared, dpaPreparation)).toBe(prepared)
+  expect(() => prepareCaseRelease(prepared, { ...dpaPreparation, responseId: 'REG-FCA-204' })).toThrow('different intent')
+  expect(() => prepareCaseRelease(prepared, { ...dpaPreparation, evidenceIds: ['DPA-CUSTODY-OTHER'] })).toThrow('different intent')
+  const approved = approvedDpa()
+  const decision = { id: 'dpa-legal', expectedRevision: 0, role: 'Compliance Lead' as const, responseId: 'REG-DPA-118', preparationId: 'dpa-source', caseLegalReview: true as const, decision: 'approved' as const, rationale: 'The DPA amendment and custody evidence satisfy the assigned legal obligation.', reviewer: 'DPA privacy counsel', reviewedOn: '2026-10-22T18:00:00Z' }
+  expect(reviewCaseRelease(approved, decision)).toBe(approved)
+  expect(() => reviewCaseRelease(approved, { ...decision, reviewer: 'Other counsel' })).toThrow('different intent')
+  expect(() => reviewCaseRelease(approved, { ...decision, id: '  ', expectedRevision: approved.revision })).toThrow('command identity')
+  const dispatched = recordResponseDispatchAttempt(approved, dpaDispatch)
+  const before = structuredClone(dispatched)
+  expect(() => closeRegulatoryObligation(dispatched, { id: 'dpa-close', expectedRevision: dispatched.revision, role: 'Compliance Lead', responseId: 'REG-DPA-118', evidenceIds: ['DPA-CUSTODY-118'], legalApproval: 'dpa-legal', complianceApproval: 'dpa-close', releaseReference: 'DPA-RELEASE-118-R1', dispatchEvidence: 'DPA-DISPATCH-118', regulatorAcknowledgement: 'DPA-ACK-118', outstandingFollowUps: 0, closedBy: '  ', closedOn: '2026-10-22T20:00:00Z' })).toThrow('independent compliance')
+  expect(dispatched).toEqual(before)
+})
+
+it('executes selected DPA release after FCA closure without blocking on another case history', async () => {
+  cleanup(); localStorage.clear()
+  let current = approvedDpa()
+  current = rescheduleLegalReview(current, { ...command, id: 'fca-schedule', expectedRevision: current.revision })
+  current = recordResponseDispatchAttempt(current, { ...dpaDispatch, id: 'fca-dispatch', expectedRevision: current.revision, releaseRevision: current.revision, responseId: 'REG-FCA-204', releaseReference: 'FCA-RELEASE', dispatchEvidence: 'FCA-DISPATCH' })
+  current = closeRegulatoryObligation(current, { id: 'fca-close', expectedRevision: current.revision, role: 'Compliance Lead', responseId: 'REG-FCA-204', evidenceIds: ['EVD-DEVICE-7'], legalApproval: 'FCA-LEGAL', complianceApproval: 'FCA-COMP', releaseReference: 'FCA-RELEASE', dispatchEvidence: 'FCA-DISPATCH', regulatorAcknowledgement: 'FCA-ACK', outstandingFollowUps: 0, closedBy: 'Compliance lead', closedOn: '2026-10-22T20:00:00Z' })
+  new BrowserRegulatorResponsePersistence(localStorage).save(current)
+  const user = userEvent.setup(); render(createElement(RegulatorResponseControl))
+  await user.selectOptions(screen.getByLabelText('Active release case'), 'REG-DPA-118')
+  await user.selectOptions(screen.getByLabelText('Response control role'), 'Compliance Lead')
+  fireEvent.change(screen.getByLabelText('Case release reference'), { target: { value: 'DPA-RELEASE-118-R1' } })
+  fireEvent.change(screen.getByLabelText('Case dispatch evidence'), { target: { value: 'DPA-DISPATCH-118' } })
+  fireEvent.change(screen.getByLabelText('Case regulator acknowledgement'), { target: { value: 'DPA-ACK-118' } })
+  expect(screen.getByRole('button', { name: 'Record retryable dispatch failure' })).toBeEnabled()
+  await user.click(screen.getByRole('button', { name: 'Dispatch approved response' }))
+  expect(screen.getByRole('button', { name: 'Acknowledge and close response' })).toBeEnabled()
+  await user.click(screen.getByRole('button', { name: 'Acknowledge and close response' }))
+  expect(new BrowserRegulatorResponsePersistence(localStorage).load()?.closures).toHaveLength(2)
+  expect(new BrowserRegulatorResponsePersistence(localStorage).load()?.closures[0]).toEqual(current.closures[0])
+  expect(screen.getByRole('list', { name: 'Regulatory closure history' })).toHaveTextContent('DPA-ACK-118')
+  expect(screen.getByRole('list', { name: 'Regulatory closure history' })).not.toHaveTextContent('FCA-ACK')
   cleanup(); localStorage.clear()
 })

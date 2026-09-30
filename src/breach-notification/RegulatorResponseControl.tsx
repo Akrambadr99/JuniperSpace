@@ -14,6 +14,7 @@ import {
   type RegulatoryFollowUpEvent,
 } from "./regulator-response-domain";
 
+interface CaseInput { reviewer: string; reviewOn: string; evidence: string; amendment: string; reason: string; legalRationale: string; release: string; dispatch: string; acknowledgement: string }
 interface ObligationInput { draft: { requested: string; statement: string; evidence: string; reason: string; owner: string }; rationale: string; stageEvidence: string }
 function readObligationInputs(): Record<string, ObligationInput> {
   try {
@@ -37,6 +38,42 @@ export function RegulatorResponseControl() {
   const [state, setState] = useState(() => repository.read());
   const [role, setRole] = useState<RegulatorControlRole>("Compliance Analyst");
   const [message, setMessage] = useState("");
+  const [releaseCaseId, setReleaseCaseId] = useState('REG-FCA-204');
+  const [caseInputs, setCaseInputs] = useState<Record<string, CaseInput>>(() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem('sentinelarc:case-release-input:v1') ?? '{}');
+      if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {};
+      return Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, CaseInput] => {
+        const value: unknown = entry[1];
+        return Boolean(value && typeof value === 'object' && ['reviewer', 'reviewOn', 'evidence', 'amendment', 'reason', 'legalRationale', 'release', 'dispatch', 'acknowledgement'].every((key) => typeof (value as Record<string, unknown>)[key] === 'string'));
+      }));
+    } catch { return {}; }
+  });
+  const legacyRelease = releaseCaseId === 'REG-FCA-204';
+  const selectedResponse = state.responses.find((item) => item.responseId === releaseCaseId);
+  const caseInput = caseInputs[releaseCaseId] ?? { reviewer: legacyRelease ? 'Senior privacy counsel' : (selectedResponse?.regulator ?? 'Regulatory') + ' privacy counsel', reviewOn: legacyRelease ? '2026-10-20T18:00:00Z' : '2026-10-22T18:00:00Z', evidence: legacyRelease ? 'EVD-DEVICE-7' : '', amendment: '', reason: 'Evidence and source amendments are prepared for independent regulatory review.', legalRationale: 'The source package satisfies the case-specific evidence and amendment obligations.', release: legacyRelease ? 'RELEASE-204-R1' : '', dispatch: legacyRelease ? 'DISPATCH-FCA-204' : '', acknowledgement: legacyRelease ? 'ACK-FCA-204' : '' };
+  const updateCaseInput = (field: keyof CaseInput, value: string) => { setCaseInputs((current) => ({ ...current, [releaseCaseId]: { ...caseInput, ...current[releaseCaseId], [field]: value } })); };
+  useEffect(() => { localStorage.setItem('sentinelarc:case-release-input:v1', JSON.stringify(caseInputs)); }, [caseInputs]);
+  const currentLegalReviewSchedule = state.reviewHistory.filter((item) => item.responseId === releaseCaseId).at(-1);
+  const currentCasePreparation = state.casePreparations.filter((item) => item.responseId === releaseCaseId).at(-1);
+  const currentCaseLegalReview = state.caseLegalReviews.filter((item) => item.responseId === releaseCaseId).at(-1);
+  const currentCaseAttempts = state.dispatchAttempts.filter((item) => item.responseId === releaseCaseId && item.releaseReference === caseInput.release);
+  const governedRelease = !legacyRelease || Boolean(currentCasePreparation);
+  const legalReleaseReady = !governedRelease || (currentCaseLegalReview?.decision === 'approved' && currentCaseLegalReview.preparationId === currentCasePreparation?.id && currentCaseLegalReview.reviewChangeId === currentLegalReviewSchedule?.id);
+  const caseBusinessTime = (fallback: string) => [fallback, ...state.casePreparations.filter((item) => item.responseId === releaseCaseId).map((item) => item.preparedOn), ...state.caseLegalReviews.filter((item) => item.responseId === releaseCaseId).map((item) => item.reviewedOn), ...state.dispatchAttempts.filter((item) => item.responseId === releaseCaseId).map((item) => item.attemptedOn)].sort().at(-1) ?? fallback;
+  const prepareCase = () => {
+    try {
+      setState(repository.dispatch({ id: crypto.randomUUID(), expectedRevision: state.revision, role, responseId: releaseCaseId, casePreparation: true, evidenceIds: caseInput.evidence.split(',').map((item) => item.trim()).filter(Boolean), amendmentEvidence: caseInput.amendment || null, reason: caseInput.reason, preparedBy: role, preparedOn: caseBusinessTime('2026-10-20T18:00:00Z') }));
+      setMessage('Case-specific source evidence prepared; independent legal release review is required.');
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Case preparation failed.'); }
+  };
+  const reviewCase = (decision: 'approved' | 'returned') => {
+    if (!currentCasePreparation) return;
+    try {
+      setState(repository.dispatch({ id: crypto.randomUUID(), expectedRevision: state.revision, role, responseId: releaseCaseId, caseLegalReview: true, preparationId: currentCasePreparation.id, decision, rationale: caseInput.legalRationale, reviewer: currentLegalReviewSchedule?.reviewer ?? '', reviewedOn: caseBusinessTime(currentLegalReviewSchedule?.reviewOn ?? '2026-10-20T18:00:00Z') }));
+      setMessage(decision === 'approved' ? 'Current case source evidence independently approved for release.' : 'Current case source evidence returned; correction must preserve the prior legal decision.');
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Case legal review failed.'); }
+  };
   const [archiveCaseId, setArchiveCaseId] = useState('REG-FCA-204');
   const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null);
   const [followUpCaseId, setFollowUpCaseId] = useState('REG-FCA-204');
@@ -78,8 +115,8 @@ export function RegulatorResponseControl() {
   const captureArchive = () => { try { const id = crypto.randomUUID(); setState(repository.captureArchive({ id, expectedRevision: state.revision, responseId: archiveCaseId, role, createdBy: 'Compliance lead', createdOn: '2026-10-29' })); setSelectedArchiveId(id); setMessage('Regulatory case archive captured with verified release and correction lineage.'); } catch (error) { setMessage(error instanceof Error ? error.message : 'Case archive failed.'); } queueMicrotask(() => feedback.current?.focus()); };
   const recovery = getDispatchRecoveryStatus(
     state,
-    "REG-FCA-204",
-    "RELEASE-204-R1",
+    releaseCaseId,
+    caseInput.release,
   );
 
   const operationDay = () => ['2026-10-26', ...state.followUpEvents.filter((item) => item.obligationId === obligationId).map((item) => item.occurredOn.slice(0, 10)), ...state.followUpDrafts.filter((item) => item.obligationId === obligationId).map((item) => item.draftedOn.slice(0, 10)), ...state.followUpReviews.filter((item) => item.obligationId === obligationId).map((item) => item.reviewedOn.slice(0, 10)), ...state.correctionSchedule.filter((item) => selectedCorrectionIds.has(item.correctionRequestId)).map((item) => item.escalatedOn.slice(0, 10))].sort().at(-1) ?? '2026-10-26';
@@ -105,9 +142,9 @@ export function RegulatorResponseControl() {
           id: crypto.randomUUID(),
           expectedRevision: state.revision,
           role,
-          responseId: "REG-FCA-204",
-          reviewer: "Senior privacy counsel",
-          reviewOn: "2026-10-20T18:00:00Z",
+          responseId: releaseCaseId,
+          reviewer: caseInput.reviewer,
+          reviewOn: caseInput.reviewOn,
           asOf: "2026-10-20T09:00:00Z",
           reason:
             "Evidence blocker requires senior counsel review before deadline.",
@@ -132,16 +169,16 @@ export function RegulatorResponseControl() {
           id: crypto.randomUUID(),
           expectedRevision: state.revision,
           role,
-          responseId: "REG-FCA-204",
-          releaseReference: "RELEASE-204-R1",
+          responseId: releaseCaseId,
+          releaseReference: caseInput.release,
           releaseRevision: state.revision,
           status: "succeeded",
           failureClassification: null,
           retryEligible: false,
           actor: "Compliance dispatch service",
-          attemptedOn: "2026-10-20T19:30:00Z",
+          attemptedOn: caseBusinessTime('2026-10-20T19:30:00Z'),
           retryOf: null,
-          dispatchEvidence: "DISPATCH-FCA-204",
+          dispatchEvidence: caseInput.dispatch,
         }),
       );
       setMessage(
@@ -161,14 +198,14 @@ export function RegulatorResponseControl() {
           id: crypto.randomUUID(),
           expectedRevision: state.revision,
           role,
-          responseId: "REG-FCA-204",
-          releaseReference: "RELEASE-204-R1",
+          responseId: releaseCaseId,
+          releaseReference: caseInput.release,
           releaseRevision: state.revision,
           status: "failed",
           failureClassification: "regulator-gateway-timeout",
           retryEligible: true,
           actor: "Compliance dispatch service",
-          attemptedOn: "2026-10-20T19:25:00Z",
+          attemptedOn: caseBusinessTime('2026-10-20T19:25:00Z'),
           retryOf: null,
           dispatchEvidence: null,
         }),
@@ -194,16 +231,16 @@ export function RegulatorResponseControl() {
           id: crypto.randomUUID(),
           expectedRevision: state.revision,
           role,
-          responseId: "REG-FCA-204",
+          responseId: releaseCaseId,
           releaseReference: failed.releaseReference,
           releaseRevision: failed.releaseRevision,
           status: "succeeded",
           failureClassification: null,
           retryEligible: false,
           actor: "Compliance dispatch service",
-          attemptedOn: "2026-10-20T19:35:00Z",
+          attemptedOn: caseBusinessTime('2026-10-20T19:35:00Z'),
           retryOf: failed.id,
-          dispatchEvidence: "DISPATCH-FCA-204",
+          dispatchEvidence: caseInput.dispatch,
         }),
       );
       setMessage(
@@ -220,21 +257,22 @@ export function RegulatorResponseControl() {
   };
   const close = () => {
     try {
+      const closureId = crypto.randomUUID();
       setState(
         repository.dispatch({
-          id: crypto.randomUUID(),
+          id: closureId,
           expectedRevision: state.revision,
           role,
-          responseId: "REG-FCA-204",
-          evidenceIds: ["EVD-DEVICE-7"],
-          legalApproval: "LEGAL-APP-204",
-          complianceApproval: "COMP-APP-204",
-          releaseReference: "RELEASE-204-R1",
-          dispatchEvidence: "DISPATCH-FCA-204",
-          regulatorAcknowledgement: "ACK-FCA-204",
+          responseId: releaseCaseId,
+          evidenceIds: currentCasePreparation?.evidenceIds ?? caseInput.evidence.split(',').map((item) => item.trim()).filter(Boolean),
+          legalApproval: currentCaseLegalReview?.id ?? (legacyRelease ? "LEGAL-APP-204" : ""),
+          complianceApproval: closureId,
+          releaseReference: caseInput.release,
+          dispatchEvidence: caseInput.dispatch,
+          regulatorAcknowledgement: caseInput.acknowledgement,
           outstandingFollowUps: 0,
           closedBy: "Compliance lead",
-          closedOn: "2026-10-20T20:00:00Z",
+          closedOn: caseBusinessTime('2026-10-20T20:00:00Z'),
         }),
       );
       setMessage(
@@ -252,6 +290,26 @@ export function RegulatorResponseControl() {
   return (
     <section className="card" aria-label="Regulator response readiness">
       <h2>Regulator response readiness</h2>
+      <section aria-label="Case release control">
+        <h3>Source preparation and legal release</h3>
+        <label>Active release case<select value={releaseCaseId} onChange={(event) => { setReleaseCaseId(event.target.value); }}>{state.responses.map((item) => <option key={item.responseId} value={item.responseId}>{item.responseId} · {item.regulator}</option>)}</select></label>
+        <p>{selectedResponse?.regulator} · deadline {selectedResponse?.deadline} · {selectedResponse?.released ? 'acknowledged release' : 'open release'} · {governedRelease ? 'independent source review required' : 'Legacy FCA release attribution retained; record source preparation to use governed review.'}</p>
+        <label>Legal review owner<input value={caseInput.reviewer} onChange={(event) => { updateCaseInput('reviewer', event.target.value); }} /></label>
+        <label>Legal review business timestamp<input value={caseInput.reviewOn} onChange={(event) => { updateCaseInput('reviewOn', event.target.value); }} /></label>
+        <label>Case source evidence<input value={caseInput.evidence} onChange={(event) => { updateCaseInput('evidence', event.target.value); }} /></label>
+        <label>Case amendment evidence<input value={caseInput.amendment} onChange={(event) => { updateCaseInput('amendment', event.target.value); }} /></label>
+        <label>Case preparation reason<textarea value={caseInput.reason} onChange={(event) => { updateCaseInput('reason', event.target.value); }} /></label>
+        <button disabled={role !== 'Compliance Analyst' || (selectedResponse?.released ?? true) || currentCaseAttempts.some((item) => item.status === 'succeeded')} onClick={prepareCase}>Prepare case release evidence</button>
+        <label>Case legal review rationale<textarea value={caseInput.legalRationale} onChange={(event) => { updateCaseInput('legalRationale', event.target.value); }} /></label>
+        <button disabled={role !== 'Compliance Lead' || !currentLegalReviewSchedule || !currentCasePreparation || currentCaseLegalReview?.preparationId === currentCasePreparation.id && currentCaseLegalReview.reviewChangeId === currentLegalReviewSchedule.id} onClick={() => { reviewCase('approved'); }}>Approve case release evidence</button>
+        <button disabled={role !== 'Compliance Lead' || !currentLegalReviewSchedule || !currentCasePreparation || currentCaseLegalReview?.preparationId === currentCasePreparation.id && currentCaseLegalReview.reviewChangeId === currentLegalReviewSchedule.id} onClick={() => { reviewCase('returned'); }}>Return case release evidence</button>
+        <label>Case release reference<input value={caseInput.release} onChange={(event) => { updateCaseInput('release', event.target.value); }} /></label>
+        <label>Case dispatch evidence<input value={caseInput.dispatch} onChange={(event) => { updateCaseInput('dispatch', event.target.value); }} /></label>
+        <label>Case regulator acknowledgement<input value={caseInput.acknowledgement} onChange={(event) => { updateCaseInput('acknowledgement', event.target.value); }} /></label>
+        <ol aria-label="Case preparation history">{state.casePreparations.filter((item) => item.responseId === releaseCaseId).map((item) => <li key={item.id}>{item.id} · {item.evidenceIds.join(', ')} · amendment {item.amendmentEvidence ?? 'not required'} · {item.preparedBy} · {item.preparedOn}</li>)}</ol>
+        <ol aria-label="Case legal release decisions">{state.caseLegalReviews.filter((item) => item.responseId === releaseCaseId).map((item) => <li key={item.id}>{item.preparationId} · {item.decision} · {item.reviewer} · {item.rationale}</li>)}</ol>
+      </section>
+
       <label>
         Response control role
         <select
@@ -279,9 +337,9 @@ export function RegulatorResponseControl() {
       </button>
       <button
         disabled={
-          role !== "Compliance Lead" ||
-          state.reviewHistory.length === 0 ||
-          state.dispatchAttempts.length > 0
+          role !== "Compliance Lead" || !legalReleaseReady ||
+          !currentLegalReviewSchedule ||
+          currentCaseAttempts.length > 0
         }
         onClick={dispatch}
       >
@@ -290,8 +348,9 @@ export function RegulatorResponseControl() {
       <button
         disabled={
           role !== "Compliance Lead" ||
-          state.reviewHistory.length === 0 ||
-          state.dispatchAttempts.length > 0
+          !legalReleaseReady ||
+          !currentLegalReviewSchedule ||
+          currentCaseAttempts.length > 0
         }
         onClick={failDispatch}
       >
@@ -314,8 +373,9 @@ export function RegulatorResponseControl() {
       <button
         disabled={
           role !== "Compliance Lead" ||
-          !state.dispatchAttempts.some((item) => item.status === "succeeded") ||
-          state.closures.length > 0
+          !legalReleaseReady ||
+          !currentCaseAttempts.some((item) => item.status === "succeeded") ||
+          state.closures.some((item) => item.responseId === releaseCaseId)
         }
         onClick={close}
       >
@@ -335,7 +395,7 @@ export function RegulatorResponseControl() {
         </p>
       )}
       <ol aria-label="Response dispatch history">
-        {state.dispatchAttempts.map((item) => (
+        {state.dispatchAttempts.filter((item) => item.responseId === releaseCaseId).map((item) => (
           <li key={item.id}>
             {item.responseId} · {item.status} · attempt {item.attemptNumber} ·{" "}
             {item.dispatchEvidence ?? item.failureClassification}
@@ -352,7 +412,7 @@ export function RegulatorResponseControl() {
         ))}
       </ol>
       <ol aria-label="Regulatory closure history">
-        {state.closures.map((item) => (
+        {state.closures.filter((item) => item.responseId === releaseCaseId).map((item) => (
           <li key={item.id}>
             {item.responseId} · release {item.releaseReference} · dispatch{" "}
             {item.dispatchEvidence} · acknowledgement{" "}

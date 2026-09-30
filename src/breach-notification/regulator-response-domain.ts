@@ -1,9 +1,11 @@
 import { seededRegulatorResponses, type RegulatorResponseRecord } from './regulator-readiness'
 
 export type RegulatorControlRole = 'Compliance Analyst' | 'Compliance Lead'
+export interface CaseReleasePreparation { id: string; responseId: string; previousPreparationId: string | null; requiredEvidenceIds: string[]; evidenceIds: string[]; amendmentEvidence: string | null; reason: string; preparedBy: string; preparedOn: string; immutable: true }
+export interface CaseLegalReleaseReview { id: string; responseId: string; preparationId: string; reviewChangeId: string; decision: 'approved' | 'returned'; rationale: string; reviewer: string; reviewedOn: string; immutable: true }
 export interface LegalReviewChange { id: string; responseId: string; previousReviewer: string | null; reviewer: string; previousReviewOn: string | null; reviewOn: string; reason: string; deadline: string; immutable: true }
 export interface RegulatoryClosure { id: string; responseId: string; reviewChangeId: string; evidenceIds: string[]; legalApproval: string; complianceApproval: string; releaseReference: string; dispatchEvidence: string; regulatorAcknowledgement: string; outstandingFollowUps: 0; closedBy: string; closedOn: string; immutable: true }
-export interface ResponseDispatchAttempt { id: string; responseId: string; releaseReference: string; releaseRevision: number; attemptNumber: number; status: 'failed' | 'succeeded'; failureClassification: string | null; retryEligible: boolean; actor: string; attemptedOn: string; retryOf: string | null; dispatchEvidence: string | null; immutable: true }
+export interface ResponseDispatchAttempt { preparationId?: string; legalReviewId?: string; id: string; responseId: string; releaseReference: string; releaseRevision: number; attemptNumber: number; status: 'failed' | 'succeeded'; failureClassification: string | null; retryEligible: boolean; actor: string; attemptedOn: string; retryOf: string | null; dispatchEvidence: string | null; immutable: true }
 export type RegulatoryFollowUpStage = 'opened' | 'drafted' | 'approved' | 'dispatched' | 'acknowledged' | 'closed'
 export interface RegulatoryFollowUpEvent { id: string; obligationId: string; responseId: string; releaseReference: string; obligationType: 'information-request' | 'remediation-update' | 'evidence-supplement'; deadline: string; owner: string; stage: RegulatoryFollowUpStage; evidenceReference: string; actor: string; occurredOn: string; sourceRevision: number; requiresReviewedDraft?: true; approvedDraftId?: string; approvedReviewId?: string; approvalEventId?: string; immutable: true }
 export interface FollowUpResponseDraft { id: string; obligationId: string; sourceReleaseReference: string; previousDraftId: string | null; correctionRequestId?: string; requestedInformation: string; responseStatement: string; evidenceReferences: string[]; amendmentReason: string | null; owner: string; draftedBy: string; draftedOn: string; sourceRevision: number; immutable: true }
@@ -13,10 +15,10 @@ export interface FollowUpCorrectionRequest { id: string; obligationId: string; r
 export interface CorrectionScheduleEvent { id: string; correctionRequestId: string; previousOwner: string; owner: string; previousDueOn: string; dueOn: string; reason: string; evidenceReference: string; escalatedBy: string; escalatedOn: string; policyRevisionId?: string; replacesUnacknowledgedId?: string; acknowledgementDueOn?: string; higherAuthority?: string; immutable: true }
 export interface CorrectionEscalationAcknowledgement { id: string; scheduleId: string; correctionRequestId: string; owner: string; evidenceReference: string; acknowledgedBy: string; acknowledgedOn: string; immutable: true }
 export interface CorrectionAuthorityFollowUp { id: string; scheduleId: string; correctionRequestId: string; authority: string; asOf: string; evidenceReference: string; recordedBy: string; immutable: true }
-export interface RegulatoryCaseArchive { authorityPolicies?: CorrectionAuthorityPolicy[]; legacyEffectiveScheduleIds?: string[]; schemaVersion: 1; id: string; responseId: string; sourceRevision: number; createdOn: string; createdBy: string; response: RegulatorResponseRecord; reviewHistory: LegalReviewChange[]; dispatchAttempts: ResponseDispatchAttempt[]; followUpEvents: RegulatoryFollowUpEvent[]; followUpDrafts: FollowUpResponseDraft[]; followUpReviews: FollowUpDraftReview[]; correctionRequests: FollowUpCorrectionRequest[]; correctionSchedule: CorrectionScheduleEvent[]; correctionAcknowledgements: CorrectionEscalationAcknowledgement[]; authorityFollowUps: CorrectionAuthorityFollowUp[]; closures: RegulatoryClosure[]; immutable: true }
-export interface RegulatorResponseState { revision: number; responses: RegulatorResponseRecord[]; reviewHistory: LegalReviewChange[]; dispatchAttempts: ResponseDispatchAttempt[]; followUpEvents: RegulatoryFollowUpEvent[]; followUpDrafts: FollowUpResponseDraft[]; followUpReviews: FollowUpDraftReview[]; correctionRequests: FollowUpCorrectionRequest[]; authorityPolicies: CorrectionAuthorityPolicy[]; correctionSchedule: CorrectionScheduleEvent[]; correctionAcknowledgements: CorrectionEscalationAcknowledgement[]; authorityFollowUps: CorrectionAuthorityFollowUp[]; legacyEffectiveScheduleIds: string[]; closures: RegulatoryClosure[]; caseArchives: RegulatoryCaseArchive[] }
+export interface RegulatoryCaseArchive { casePreparations?: CaseReleasePreparation[]; caseLegalReviews?: CaseLegalReleaseReview[]; authorityPolicies?: CorrectionAuthorityPolicy[]; legacyEffectiveScheduleIds?: string[]; schemaVersion: 1; id: string; responseId: string; sourceRevision: number; createdOn: string; createdBy: string; response: RegulatorResponseRecord; reviewHistory: LegalReviewChange[]; dispatchAttempts: ResponseDispatchAttempt[]; followUpEvents: RegulatoryFollowUpEvent[]; followUpDrafts: FollowUpResponseDraft[]; followUpReviews: FollowUpDraftReview[]; correctionRequests: FollowUpCorrectionRequest[]; correctionSchedule: CorrectionScheduleEvent[]; correctionAcknowledgements: CorrectionEscalationAcknowledgement[]; authorityFollowUps: CorrectionAuthorityFollowUp[]; closures: RegulatoryClosure[]; immutable: true }
+export interface RegulatorResponseState { casePreparations: CaseReleasePreparation[]; caseLegalReviews: CaseLegalReleaseReview[]; revision: number; responses: RegulatorResponseRecord[]; reviewHistory: LegalReviewChange[]; dispatchAttempts: ResponseDispatchAttempt[]; followUpEvents: RegulatoryFollowUpEvent[]; followUpDrafts: FollowUpResponseDraft[]; followUpReviews: FollowUpDraftReview[]; correctionRequests: FollowUpCorrectionRequest[]; authorityPolicies: CorrectionAuthorityPolicy[]; correctionSchedule: CorrectionScheduleEvent[]; correctionAcknowledgements: CorrectionEscalationAcknowledgement[]; authorityFollowUps: CorrectionAuthorityFollowUp[]; legacyEffectiveScheduleIds: string[]; closures: RegulatoryClosure[]; caseArchives: RegulatoryCaseArchive[] }
 export const initialCorrectionAuthorityPolicies: CorrectionAuthorityPolicy[] = (['information-request', 'remediation-update', 'evidence-supplement'] as const).map((obligationType) => ({ id: `${obligationType}:policy-1`, obligationType, effectiveOn: '2026-10-20', approvedBy: 'Compliance lead', primaryAuthority: null, nextAuthority: null, acknowledgementDays: 1, immutable: true }))
-export const initialRegulatorResponseState: RegulatorResponseState = { revision: 0, responses: structuredClone(seededRegulatorResponses), reviewHistory: [], dispatchAttempts: [], followUpEvents: [], followUpDrafts: [], followUpReviews: [], correctionRequests: [], authorityPolicies: structuredClone(initialCorrectionAuthorityPolicies), correctionSchedule: [], correctionAcknowledgements: [], authorityFollowUps: [], legacyEffectiveScheduleIds: [], closures: [], caseArchives: [] }
+export const initialRegulatorResponseState: RegulatorResponseState = { revision: 0, responses: structuredClone(seededRegulatorResponses), reviewHistory: [], dispatchAttempts: [], followUpEvents: [], followUpDrafts: [], followUpReviews: [], correctionRequests: [], authorityPolicies: structuredClone(initialCorrectionAuthorityPolicies), correctionSchedule: [], correctionAcknowledgements: [], authorityFollowUps: [], legacyEffectiveScheduleIds: [], closures: [], caseArchives: [], casePreparations: [], caseLegalReviews: [] }
 
 export function regulatoryCaseIntegrity(state: RegulatorResponseState, responseId: string): string[] {
   const response = state.responses.find((item) => item.responseId === responseId)
@@ -30,6 +32,8 @@ export function regulatoryCaseIntegrity(state: RegulatorResponseState, responseI
   const corrections = state.correctionRequests.filter((item) => obligationIds.has(item.obligationId))
   const schedules = state.correctionSchedule.filter((item) => corrections.some((request) => request.id === item.correctionRequestId))
   const reasons: string[] = []
+  if (state.caseLegalReviews.filter((item) => item.responseId === responseId).some((item) => !state.casePreparations.some((preparation) => preparation.id === item.preparationId && preparation.responseId === responseId) || !state.reviewHistory.some((review) => review.id === item.reviewChangeId && review.responseId === responseId))) reasons.push('Case legal approval lacks its source preparation or review assignment.')
+  if (attempts.some((item) => item.legalReviewId && !state.caseLegalReviews.some((review) => review.id === item.legalReviewId && review.preparationId === item.preparationId && review.responseId === responseId && review.decision === 'approved'))) reasons.push('Dispatch lacks its pinned case legal approval.')
   if (closures.some((item) => !state.reviewHistory.some((review) => review.id === item.reviewChangeId && review.responseId === responseId) || !attempts.some((attempt) => attempt.status === 'succeeded' && attempt.releaseReference === item.releaseReference && attempt.dispatchEvidence === item.dispatchEvidence))) reasons.push('Acknowledged release lacks its legal review or successful dispatch source.')
   if (attempts.some((item) => item.retryOf && !attempts.some((prior) => prior.id === item.retryOf && prior.releaseRevision === item.releaseRevision))) reasons.push('Dispatch retry has no matching source release revision.')
   if (followUps.some((item) => !closures.some((closure) => closure.releaseReference === item.releaseReference))) reasons.push('Follow-up obligation lacks its acknowledged release.')
@@ -59,7 +63,7 @@ export function captureRegulatoryCaseArchive(state: RegulatorResponseState, comm
   const pinnedPolicyIds = new Set([...correctionRequests.map((item) => item.authorityPolicyId), ...schedules.map((item) => item.policyRevisionId)].filter((id): id is string => Boolean(id)))
   const authorityPolicies = state.authorityPolicies.filter((item) => pinnedPolicyIds.has(item.id))
   const legacyEffectiveScheduleIds = state.legacyEffectiveScheduleIds.filter((id) => schedules.some((item) => item.id === id))
-  const archive: RegulatoryCaseArchive = structuredClone({ authorityPolicies, legacyEffectiveScheduleIds, schemaVersion: 1, id: command.id, responseId: response.responseId, sourceRevision: state.revision, createdOn: command.createdOn, createdBy: command.createdBy.trim(), response, reviewHistory: state.reviewHistory.filter((item) => item.responseId === response.responseId), dispatchAttempts: state.dispatchAttempts.filter((item) => item.responseId === response.responseId), followUpEvents, followUpDrafts, followUpReviews: state.followUpReviews.filter((item) => obligationIds.has(item.obligationId)), correctionRequests, correctionSchedule: schedules, correctionAcknowledgements: state.correctionAcknowledgements.filter((item) => schedules.some((schedule) => schedule.id === item.scheduleId)), authorityFollowUps: state.authorityFollowUps.filter((item) => schedules.some((schedule) => schedule.id === item.scheduleId)), closures: state.closures.filter((item) => item.responseId === response.responseId), immutable: true })
+  const archive: RegulatoryCaseArchive = structuredClone({ casePreparations: state.casePreparations.filter((item) => item.responseId === response.responseId), caseLegalReviews: state.caseLegalReviews.filter((item) => item.responseId === response.responseId), authorityPolicies, legacyEffectiveScheduleIds, schemaVersion: 1, id: command.id, responseId: response.responseId, sourceRevision: state.revision, createdOn: command.createdOn, createdBy: command.createdBy.trim(), response, reviewHistory: state.reviewHistory.filter((item) => item.responseId === response.responseId), dispatchAttempts: state.dispatchAttempts.filter((item) => item.responseId === response.responseId), followUpEvents, followUpDrafts, followUpReviews: state.followUpReviews.filter((item) => obligationIds.has(item.obligationId)), correctionRequests, correctionSchedule: schedules, correctionAcknowledgements: state.correctionAcknowledgements.filter((item) => schedules.some((schedule) => schedule.id === item.scheduleId)), authorityFollowUps: state.authorityFollowUps.filter((item) => schedules.some((schedule) => schedule.id === item.scheduleId)), closures: state.closures.filter((item) => item.responseId === response.responseId), immutable: true })
   const next = structuredClone(state)
   next.caseArchives.push(archive)
   next.revision += 1
@@ -149,6 +153,104 @@ export function acknowledgeCorrectionEscalation(state: RegulatorResponseState, c
   return next
 }
 export const dispatchRetryPolicy = { maximumAttemptsPerRelease: 3 } as const
+function validCaseTimestamp(value: string) {
+  const day = value.slice(0, 10)
+  return /^20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === day
+}
+/** Keeps source preparation independent from legal release authority. */
+export function prepareCaseRelease(state: RegulatorResponseState, command: { id: string; expectedRevision: number; role: RegulatorControlRole; responseId: string; evidenceIds: string[]; amendmentEvidence: string | null; reason: string; preparedBy: string; preparedOn: string; casePreparation: true }) {
+  if (command.role !== 'Compliance Analyst') throw new Error('Only the compliance analyst can prepare source evidence for legal review.')
+  const recorded = state.casePreparations.find((item) => item.id === command.id)
+  if (recorded) {
+    const evidenceIds = command.evidenceIds.map((item) => item.trim())
+    const amendmentEvidence = command.amendmentEvidence?.trim() ? command.amendmentEvidence.trim() : null
+    if (
+    recorded.responseId !== command.responseId ||
+    JSON.stringify(recorded.evidenceIds) !== JSON.stringify(evidenceIds) ||
+    recorded.amendmentEvidence !== amendmentEvidence ||
+    recorded.reason !== command.reason.trim() ||
+    recorded.preparedBy !== command.preparedBy.trim() ||
+    recorded.preparedOn !== command.preparedOn
+  ) throw new Error('Preparation identity already records different intent.')
+    return state
+  }
+  if (state.revision !== command.expectedRevision) throw new Error('Regulatory case changed. Refresh before source preparation.')
+  const response = state.responses.find((item) => item.responseId === command.responseId)
+  const previous = state.casePreparations.filter((item) => item.responseId === command.responseId).at(-1)
+  if (!response || response.released || state.dispatchAttempts.some((item) => item.responseId === response.responseId && item.status === 'succeeded')) throw new Error('Only an undispatched open case can prepare or correct release evidence.')
+  const requiredEvidenceIds = [...new Set([...response.missingEvidence, ...(previous?.requiredEvidenceIds ?? [])])]
+  const evidenceIds = command.evidenceIds.map((item) => item.trim())
+  const priorDecision = state.caseLegalReviews.filter((item) => item.responseId === command.responseId).at(-1)
+  const priorAttempt = state.dispatchAttempts.filter((item) => item.responseId === command.responseId).at(-1)
+  if (
+    !command.id.trim() ||
+    !command.preparedBy.trim() ||
+    command.reason.trim().length < 20 ||
+    !validCaseTimestamp(command.preparedOn) ||
+    (previous && command.preparedOn < previous.preparedOn) ||
+    (priorDecision && command.preparedOn < priorDecision.reviewedOn) ||
+    (priorAttempt && command.preparedOn < priorAttempt.attemptedOn) ||
+    evidenceIds.some((item) => !item) ||
+    new Set(evidenceIds).size !== evidenceIds.length ||
+    !requiredEvidenceIds.every((item) => evidenceIds.includes(item)) ||
+    (response.amendmentRequired && !command.amendmentEvidence?.trim())
+  ) throw new Error('All required evidence, amendment proof, attributable preparation, reason and valid business timestamp are required.')
+  const next = structuredClone(state), target = next.responses.find((item) => item.responseId === response.responseId)
+  if (!target) throw new Error('Regulatory case disappeared during preparation.')
+  next.casePreparations.push({ id: command.id, responseId: response.responseId, previousPreparationId: previous?.id ?? null, requiredEvidenceIds, evidenceIds, amendmentEvidence: command.amendmentEvidence?.trim() ? command.amendmentEvidence.trim() : null, reason: command.reason.trim(), preparedBy: command.preparedBy.trim(), preparedOn: command.preparedOn, immutable: true })
+  target.draftComplete = true; target.missingEvidence = []; target.amendmentCompleted = target.amendmentRequired
+  next.revision += 1
+  return next
+}
+export function reviewCaseRelease(state: RegulatorResponseState, command: { id: string; expectedRevision: number; role: RegulatorControlRole; responseId: string; preparationId: string; decision: CaseLegalReleaseReview['decision']; rationale: string; reviewer: string; reviewedOn: string; caseLegalReview: true }) {
+  if (command.role !== 'Compliance Lead') throw new Error('Only the authorized legal review lead can decide release evidence.')
+  if (!command.id.trim()) throw new Error('Legal review needs an attributable command identity.')
+  const recorded = state.caseLegalReviews.find((item) => item.id === command.id)
+  if (recorded) {
+    if (recorded.responseId !== command.responseId || recorded.preparationId !== command.preparationId || recorded.decision !== command.decision || recorded.rationale !== command.rationale.trim() || recorded.reviewer !== command.reviewer.trim() || recorded.reviewedOn !== command.reviewedOn) throw new Error('Legal review identity already records different intent.')
+    return state
+  }
+  if (state.revision !== command.expectedRevision) throw new Error('Regulatory case changed. Refresh before legal release review.')
+  const response = state.responses.find((item) => item.responseId === command.responseId)
+  const preparation = state.casePreparations.filter((item) => item.responseId === command.responseId).at(-1)
+  const schedule = state.reviewHistory.filter((item) => item.responseId === command.responseId).at(-1)
+  if (!response || response.released || preparation?.id !== command.preparationId || !schedule || state.caseLegalReviews.some((item) => item.preparationId === preparation.id && item.reviewChangeId === schedule.id)) throw new Error('Current unreviewed source preparation and an assigned legal review are required.')
+  if (
+    !command.reviewer.trim() ||
+    command.reviewer.trim() !== schedule.reviewer ||
+    command.reviewer.trim() === preparation.preparedBy ||
+    command.rationale.trim().length < 20 ||
+    !validCaseTimestamp(command.reviewedOn) ||
+    command.reviewedOn < preparation.preparedOn ||
+    command.reviewedOn < schedule.reviewOn
+  ) throw new Error('Independent assigned legal reviewer, substantive rationale and review after preparation and schedule are required.')
+  const next = structuredClone(state)
+  next.caseLegalReviews.push({ id: command.id, responseId: response.responseId, preparationId: preparation.id, reviewChangeId: schedule.id, decision: command.decision, rationale: command.rationale.trim(), reviewer: command.reviewer.trim(), reviewedOn: command.reviewedOn, immutable: true })
+  if (command.decision === 'returned') { const target = next.responses.find((item) => item.responseId === response.responseId); if (target) target.draftComplete = false }
+  next.revision += 1
+  return next
+}
+function currentCaseApproval(state: RegulatorResponseState, responseId: string) {
+  const response = state.responses.find((item) => item.responseId === responseId)
+  const preparation = state.casePreparations.filter((item) => item.responseId === responseId).at(-1)
+  const schedule = state.reviewHistory.filter((item) => item.responseId === responseId).at(-1)
+  const review = state.caseLegalReviews.filter((item) => item.responseId === responseId).at(-1)
+  if (
+    !response ||
+    !preparation ||
+    !schedule ||
+    review?.decision !== 'approved' ||
+    review.preparationId !== preparation.id ||
+    review.reviewChangeId !== schedule.id ||
+    review.reviewer !== schedule.reviewer ||
+    review.reviewer === preparation.preparedBy ||
+    !response.draftComplete ||
+    response.missingEvidence.length ||
+    (response.amendmentRequired && !response.amendmentCompleted)
+  ) throw new Error('Current case evidence requires independent legal approval before dispatch or closure.')
+  return { preparation, review }
+}
+
 interface RescheduleLegalReview { id: string; expectedRevision: number; role: RegulatorControlRole; responseId: string; reviewer: string; reviewOn: string; asOf: string; reason: string }
 
 export function rescheduleLegalReview(state: RegulatorResponseState, command: RescheduleLegalReview) {
@@ -178,7 +280,10 @@ export function recordResponseDispatchAttempt(state: RegulatorResponseState, com
   const response = state.responses.find((item) => item.responseId === command.responseId)
   const review = [...state.reviewHistory].reverse().find((item) => item.responseId === command.responseId)
   if (!response || !review || response.released) throw new Error('A reviewed unreleased response is required before dispatch.')
+  const approval = response.responseId !== 'REG-FCA-204' || state.casePreparations.some((item) => item.responseId === response.responseId) ? currentCaseApproval(state, response.responseId) : null
+  if (approval && (!command.releaseReference.trim() || !command.actor.trim() || (command.status === 'succeeded' && !command.dispatchEvidence?.trim()) || (command.status === 'failed' && !command.failureClassification?.trim()) || state.dispatchAttempts.some((item) => item.responseId !== response.responseId && item.releaseReference === command.releaseReference) || !validCaseTimestamp(command.attemptedOn) || command.attemptedOn < approval.review.reviewedOn)) throw new Error('Dispatch cannot predate its current independent legal approval.')
   const releaseAttempts = state.dispatchAttempts.filter((item) => item.responseId === command.responseId && item.releaseReference === command.releaseReference)
+  if (approval && releaseAttempts.some((item) => item.preparationId !== approval.preparation.id || item.legalReviewId !== approval.review.id)) throw new Error('Changed case approval needs a distinct release reference; previous attempts stay immutable.')
   if (releaseAttempts.length === 0 && command.releaseRevision !== state.revision) throw new Error('Dispatch targets a stale approved release revision.')
   const attempts = state.dispatchAttempts.filter((item) => item.responseId === command.responseId && item.releaseReference === command.releaseReference && item.releaseRevision === command.releaseRevision)
   if (attempts.some((item) => item.status === 'succeeded')) throw new Error('This approved release was already dispatched successfully.')
@@ -186,7 +291,7 @@ export function recordResponseDispatchAttempt(state: RegulatorResponseState, com
   if (command.retryOf) { const previous = releaseAttempts.find((item) => item.id === command.retryOf); if (previous?.status !== 'failed' || !previous.retryEligible || previous.releaseRevision !== command.releaseRevision) throw new Error('Dispatch retry must reference an eligible failed attempt for this release revision.'); if (state.dispatchAttempts.some((item) => item.responseId === command.responseId && item.releaseRevision > previous.releaseRevision)) throw new Error('A newer approved release superseded this failed dispatch attempt.') }
   if (command.status === 'failed' ? !command.failureClassification : !command.dispatchEvidence) throw new Error('Dispatch result evidence is incomplete.')
   const next = structuredClone(state)
-  next.dispatchAttempts.push({ ...command, attemptNumber: attempts.length + 1, immutable: true })
+  next.dispatchAttempts.push({ ...command, ...(approval ? { preparationId: approval.preparation.id, legalReviewId: approval.review.id } : {}), attemptNumber: attempts.length + 1, immutable: true })
   next.revision += 1
   return next
 }
@@ -203,6 +308,8 @@ export function closeRegulatoryObligation(state: RegulatorResponseState, command
   if (!command.releaseReference || !command.dispatchEvidence || !command.regulatorAcknowledgement || command.outstandingFollowUps !== 0) throw new Error('Release, dispatch, acknowledgement, and follow-up evidence must be complete.')
   const dispatch = [...state.dispatchAttempts].reverse().find((item) => item.responseId === command.responseId && item.releaseReference === command.releaseReference && item.status === 'succeeded' && item.dispatchEvidence === command.dispatchEvidence)
   if (!dispatch) throw new Error('A successful durable dispatch attempt is required before acknowledgement and closure.')
+  const approval = response.responseId !== 'REG-FCA-204' || state.casePreparations.some((item) => item.responseId === response.responseId) ? currentCaseApproval(state, response.responseId) : null
+  if (approval && (!command.closedBy.trim() || !command.regulatorAcknowledgement.trim() || command.legalApproval !== approval.review.id || command.complianceApproval !== command.id || command.closedBy.trim() === approval.review.reviewer || dispatch.preparationId !== approval.preparation.id || dispatch.legalReviewId !== approval.review.id || !approval.preparation.evidenceIds.every((item) => command.evidenceIds.includes(item)) || !validCaseTimestamp(command.closedOn) || command.closedOn < dispatch.attemptedOn)) throw new Error('Closure must pin the dispatched source preparation, legal review and independent compliance acknowledgement.')
   const next = structuredClone(state)
   const target = next.responses.find((item) => item.responseId === response.responseId)
   if (!target) throw new Error('Regulator response disappeared during closure.')
@@ -347,13 +454,13 @@ export class BrowserRegulatorResponsePersistence implements RegulatorResponsePer
   static key = 'sentinelarc:regulator-response-control:v2'
   private readonly storage: Pick<Storage, 'getItem' | 'setItem'>
   constructor(storage: Pick<Storage, 'getItem' | 'setItem'>) { this.storage = storage }
-  load() { const raw = this.storage.getItem(BrowserRegulatorResponsePersistence.key); if (!raw) return null; const saved = JSON.parse(raw) as Partial<RegulatorResponseState>; return { ...(saved as RegulatorResponseState), reviewHistory: saved.reviewHistory ?? [], dispatchAttempts: saved.dispatchAttempts ?? [], followUpEvents: saved.followUpEvents ?? [], followUpDrafts: saved.followUpDrafts ?? [], followUpReviews: saved.followUpReviews ?? [], correctionRequests: saved.correctionRequests ?? [], authorityPolicies: saved.authorityPolicies ?? structuredClone(initialCorrectionAuthorityPolicies), correctionSchedule: saved.correctionSchedule ?? [], correctionAcknowledgements: saved.correctionAcknowledgements ?? [], authorityFollowUps: saved.authorityFollowUps ?? [], legacyEffectiveScheduleIds: saved.legacyEffectiveScheduleIds ?? (saved.correctionAcknowledgements === undefined ? (saved.correctionSchedule ?? []).map((item) => item.id) : []), closures: saved.closures ?? [], caseArchives: saved.caseArchives ?? [] } }
+  load() { const raw = this.storage.getItem(BrowserRegulatorResponsePersistence.key); if (!raw) return null; const saved = JSON.parse(raw) as Partial<RegulatorResponseState>; return { ...(saved as RegulatorResponseState), reviewHistory: saved.reviewHistory ?? [], dispatchAttempts: saved.dispatchAttempts ?? [], followUpEvents: saved.followUpEvents ?? [], followUpDrafts: saved.followUpDrafts ?? [], followUpReviews: saved.followUpReviews ?? [], correctionRequests: saved.correctionRequests ?? [], authorityPolicies: saved.authorityPolicies ?? structuredClone(initialCorrectionAuthorityPolicies), correctionSchedule: saved.correctionSchedule ?? [], correctionAcknowledgements: saved.correctionAcknowledgements ?? [], authorityFollowUps: saved.authorityFollowUps ?? [], legacyEffectiveScheduleIds: saved.legacyEffectiveScheduleIds ?? (saved.correctionAcknowledgements === undefined ? (saved.correctionSchedule ?? []).map((item) => item.id) : []), closures: saved.closures ?? [], caseArchives: saved.caseArchives ?? [], casePreparations: saved.casePreparations ?? [], caseLegalReviews: saved.caseLegalReviews ?? [] } }
   save(state: RegulatorResponseState) { this.storage.setItem(BrowserRegulatorResponsePersistence.key, JSON.stringify(state)) }
 }
 export class RegulatorResponseRepository {
   private readonly persistence: RegulatorResponsePersistence
   constructor(persistence: RegulatorResponsePersistence | Pick<Storage, 'getItem' | 'setItem'>) { this.persistence = 'load' in persistence ? persistence : new BrowserRegulatorResponsePersistence(persistence) }
   read(): RegulatorResponseState { return this.persistence.load() ?? structuredClone(initialRegulatorResponseState) }
-  dispatch(command: RescheduleLegalReview | RecordResponseDispatch | CloseRegulatoryObligation | RecordRegulatoryFollowUp | Parameters<typeof draftRegulatoryFollowUp>[1] | Parameters<typeof reviewRegulatoryFollowUpDraft>[1] | Parameters<typeof escalateCorrectionDeadline>[1] | Parameters<typeof acknowledgeCorrectionEscalation>[1] | Parameters<typeof recoverUnacknowledgedCorrectionHandoff>[1] | Parameters<typeof recordCorrectionAuthorityFollowUp>[1] | Parameters<typeof reviseCorrectionAuthorityPolicy>[1]) { const current = this.read(); const next = 'primaryAuthority' in command ? reviseCorrectionAuthorityPolicy(current, command) : 'asOf' in command && 'scheduleId' in command && 'recordedBy' in command ? recordCorrectionAuthorityFollowUp(current, command) : 'replacementOwner' in command ? recoverUnacknowledgedCorrectionHandoff(current, command) : 'scheduleId' in command ? acknowledgeCorrectionEscalation(current, command) : 'correctionRequestId' in command ? escalateCorrectionDeadline(current, command) : 'decision' in command ? reviewRegulatoryFollowUpDraft(current, command) : 'responseStatement' in command ? draftRegulatoryFollowUp(current, command) : 'obligationId' in command ? recordRegulatoryFollowUp(current, command) : 'regulatorAcknowledgement' in command ? closeRegulatoryObligation(current, command) : 'releaseRevision' in command ? recordResponseDispatchAttempt(current, command) : rescheduleLegalReview(current, command); if (next !== current) this.persistence.save(next); return next }
+  dispatch(command: Parameters<typeof prepareCaseRelease>[1] | Parameters<typeof reviewCaseRelease>[1] | RescheduleLegalReview | RecordResponseDispatch | CloseRegulatoryObligation | RecordRegulatoryFollowUp | Parameters<typeof draftRegulatoryFollowUp>[1] | Parameters<typeof reviewRegulatoryFollowUpDraft>[1] | Parameters<typeof escalateCorrectionDeadline>[1] | Parameters<typeof acknowledgeCorrectionEscalation>[1] | Parameters<typeof recoverUnacknowledgedCorrectionHandoff>[1] | Parameters<typeof recordCorrectionAuthorityFollowUp>[1] | Parameters<typeof reviseCorrectionAuthorityPolicy>[1]) { const current = this.read(); const next = 'casePreparation' in command ? prepareCaseRelease(current, command) : 'caseLegalReview' in command ? reviewCaseRelease(current, command) : 'primaryAuthority' in command ? reviseCorrectionAuthorityPolicy(current, command) : 'asOf' in command && 'scheduleId' in command && 'recordedBy' in command ? recordCorrectionAuthorityFollowUp(current, command) : 'replacementOwner' in command ? recoverUnacknowledgedCorrectionHandoff(current, command) : 'scheduleId' in command ? acknowledgeCorrectionEscalation(current, command) : 'correctionRequestId' in command ? escalateCorrectionDeadline(current, command) : 'decision' in command ? reviewRegulatoryFollowUpDraft(current, command) : 'responseStatement' in command ? draftRegulatoryFollowUp(current, command) : 'obligationId' in command ? recordRegulatoryFollowUp(current, command) : 'regulatorAcknowledgement' in command ? closeRegulatoryObligation(current, command) : 'releaseRevision' in command ? recordResponseDispatchAttempt(current, command) : rescheduleLegalReview(current, command); if (next !== current) this.persistence.save(next); return next }
   captureArchive(command: Parameters<typeof captureRegulatoryCaseArchive>[1]) { const current = this.read(); const next = captureRegulatoryCaseArchive(current, command); if (next !== current) this.persistence.save(next); return next }
 }
